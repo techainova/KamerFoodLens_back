@@ -1,0 +1,53 @@
+version: "3.9"
+
+services:
+  postgres:
+    image: postgis/postgis:15-3.4
+    container_name: kfl-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: kfl
+      POSTGRES_PASSWORD: kfl_secret
+      POSTGRES_DB: kfl
+    ports:
+      - "5432:5432"
+    volumes:
+      - kfl_postgres_data:/var/lib/postgresql/data
+
+  mongodb:
+    image: mongo:7
+    container_name: kfl-mongodb
+    restart: unless-stopped
+    ports:
+      - "27017:27017"
+    volumes:
+      - kfl_mongo_data:/data/db
+
+  redis:
+    image: redis:7-alpine
+    container_name: kfl-redis
+    restart: unless-stopped
+    ports:
+      - "16379:6379"
+    volumes:
+      - kfl_redis_data:/data
+
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: kfl-api
+    restart: unless-stopped
+    ports:
+      - "3000:3000"
+    env_file:
+      - .env
+    depends_on:
+      - postgres
+      - mongodb
+      - redis
+
+volumes:
+  kfl_postgres_data:
+  kfl_mongo_data:
+  kfl_redis_data:

@@ -1,0 +1,759 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ─────────────────────────────────────────────────────────────
+// ENUMS
+// ─────────────────────────────────────────────────────────────
+
+enum Role {
+  standard
+  pro
+  admin
+}
+
+enum OrderStatus {
+  pending
+  confirmed
+  preparing
+  ready
+  delivering
+  completed
+  cancelled
+}
+
+enum OrderMode {
+  delivery
+  pickup
+  dine_in
+  reservation
+}
+
+enum PaymentMethod {
+  cinetpay
+  stripe
+  wallet
+}
+
+enum PaymentStatus {
+  pending
+  succeeded
+  failed
+  refunded
+}
+
+enum TransactionType {
+  credit
+  debit
+}
+
+enum ProRequestStatus {
+  pending
+  approved
+  rejected
+}
+
+enum CourseLevel {
+  beginner
+  intermediate
+  advanced
+}
+
+enum LeaderboardPeriod {
+  week
+  month
+  all
+}
+
+enum NotificationType {
+  order
+  payment
+  event
+  course
+  community
+  system
+  badge
+}
+
+enum FavoriteType {
+  dish
+  restaurant
+  recipe
+}
+
+enum PayoutStatus {
+  pending
+  approved
+  rejected
+  paid
+}
+
+enum LogLevel {
+  info
+  warn
+  error
+  debug
+}
+
+enum RecipeDifficulty {
+  easy
+  medium
+  hard
+}
+
+// ─────────────────────────────────────────────────────────────
+// USER / AUTH
+// ─────────────────────────────────────────────────────────────
+
+model User {
+  id              String   @id @default(uuid())
+  email           String   @unique
+  passwordHash    String?
+  firstName       String
+  lastName        String
+  username        String?  @unique
+  phone           String?
+  avatar          String?
+  bio             String?
+  location        String?
+  role            Role     @default(standard)
+  isEmailVerified Boolean  @default(false)
+  isActive        Boolean  @default(true)
+  isBanned        Boolean  @default(false)
+  suspendedUntil  DateTime?
+  googleId        String?  @unique
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  otps               Otp[]
+  restaurants         Restaurant[]      @relation("RestaurantOwner")
+  reviews             Review[]
+  orders              Order[]
+  payments            Payment[]
+  wallet              Wallet?
+  eventsOrganized     Event[]           @relation("EventOrganizer")
+  eventRegistrations  EventRegistration[]
+  coursesInstructed   Course[]          @relation("CourseInstructor")
+  enrollments         Enrollment[]
+  userXp              UserXP?
+  leaderboardEntries  LeaderboardEntry[]
+  tombolaTickets      TombolaTicket[]
+  userBadges          UserBadge[]
+  forumThreads        ForumThread[]
+  forumReplies        ForumReply[]
+  proRequests         ProRequest[]
+  proProfile          ProProfile?
+  favorites           FavoriteItem[]
+  notifications       Notification[]
+  proMessages         ProMessage[]      @relation("ProMessageRecipient")
+  payoutsRequested    Payout[]
+
+  @@index([email])
+  @@map("users")
+}
+
+model Otp {
+  id        String   @id @default(uuid())
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  code      String
+  purpose   String
+  expiresAt DateTime
+  usedAt    DateTime?
+  createdAt DateTime @default(now())
+
+  @@index([userId])
+  @@map("otps")
+}
+
+model FavoriteItem {
+  id        String       @id @default(uuid())
+  userId    String
+  user      User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+  type      FavoriteType
+  itemId    String
+  createdAt DateTime     @default(now())
+
+  @@unique([userId, type, itemId])
+  @@map("favorite_items")
+}
+
+model Notification {
+  id        String           @id @default(uuid())
+  userId    String
+  user      User             @relation(fields: [userId], references: [id], onDelete: Cascade)
+  type      NotificationType
+  title     String
+  body      String
+  data      Json?
+  isRead    Boolean          @default(false)
+  createdAt DateTime         @default(now())
+
+  @@index([userId, isRead])
+  @@map("notifications")
+}
+
+// ─────────────────────────────────────────────────────────────
+// RESTAURANTS
+// ─────────────────────────────────────────────────────────────
+
+model Restaurant {
+  id           String   @id @default(uuid())
+  ownerId      String
+  owner        User     @relation("RestaurantOwner", fields: [ownerId], references: [id])
+  name         String
+  description  String?
+  cuisineType  String?
+  address      String?
+  city         String?
+  district     String?
+  lat          Float
+  lng          Float
+  phone        String?
+  avatar       String?
+  coverUrl     String?
+  priceRange   Int      @default(2)
+  specialties  String[]
+  hoursLabel   String?
+  isOpen       Boolean  @default(true)
+  isActive     Boolean  @default(true)
+  isVerified   Boolean  @default(false)
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  menuItems MenuItem[]
+  reviews   Review[]
+  orders    Order[]
+  promos    Promo[]
+
+  @@index([lat, lng])
+  @@map("restaurants")
+}
+
+model MenuItem {
+  id           String     @id @default(uuid())
+  restaurantId String
+  restaurant   Restaurant @relation(fields: [restaurantId], references: [id], onDelete: Cascade)
+  name         String
+  nameEN       String?
+  description  String?
+  priceXAF     Int
+  category     String?
+  imageUrl     String?
+  isAvailable  Boolean    @default(true)
+  allergens    String[]
+  createdAt    DateTime   @default(now())
+  updatedAt    DateTime   @updatedAt
+
+  orderItems OrderItem[]
+
+  @@index([restaurantId])
+  @@map("menu_items")
+}
+
+model Review {
+  id           String     @id @default(uuid())
+  userId       String
+  user         User       @relation(fields: [userId], references: [id], onDelete: Cascade)
+  restaurantId String
+  restaurant   Restaurant @relation(fields: [restaurantId], references: [id], onDelete: Cascade)
+  rating       Int
+  comment      String?
+  createdAt    DateTime   @default(now())
+
+  @@index([restaurantId])
+  @@map("reviews")
+}
+
+// ─────────────────────────────────────────────────────────────
+// ORDERS
+// ─────────────────────────────────────────────────────────────
+
+model Order {
+  id             String      @id @default(uuid())
+  ref            String      @unique
+  userId         String
+  user           User        @relation(fields: [userId], references: [id])
+  restaurantId   String
+  restaurant     Restaurant  @relation(fields: [restaurantId], references: [id])
+  status         OrderStatus @default(pending)
+  mode           OrderMode
+  totalXAF       Int
+  kflFeeXAF      Int         @default(0)
+  note           String?
+  reservationAt  DateTime?
+  createdAt      DateTime    @default(now())
+  updatedAt      DateTime    @updatedAt
+
+  items    OrderItem[]
+  payments Payment[]
+
+  @@index([userId])
+  @@index([restaurantId])
+  @@map("orders")
+}
+
+model OrderItem {
+  id         String    @id @default(uuid())
+  orderId    String
+  order      Order     @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  menuItemId String
+  menuItem   MenuItem  @relation(fields: [menuItemId], references: [id])
+  name       String
+  priceXAF   Int
+  qty        Int
+
+  @@index([orderId])
+  @@map("order_items")
+}
+
+// ─────────────────────────────────────────────────────────────
+// PAYMENTS
+// ─────────────────────────────────────────────────────────────
+
+model Payment {
+  id          String        @id @default(uuid())
+  orderId     String?
+  order       Order?        @relation(fields: [orderId], references: [id])
+  userId      String
+  user        User          @relation(fields: [userId], references: [id])
+  method      PaymentMethod
+  status      PaymentStatus @default(pending)
+  amountXAF   Int
+  externalRef String?
+  createdAt   DateTime      @default(now())
+  updatedAt   DateTime      @updatedAt
+
+  @@index([userId])
+  @@index([orderId])
+  @@map("payments")
+}
+
+model Wallet {
+  id          String        @id @default(uuid())
+  userId      String        @unique
+  user        User          @relation(fields: [userId], references: [id], onDelete: Cascade)
+  balanceXAF  Int           @default(0)
+  createdAt   DateTime      @default(now())
+  updatedAt   DateTime      @updatedAt
+
+  transactions Transaction[]
+
+  @@map("wallets")
+}
+
+model Transaction {
+  id          String          @id @default(uuid())
+  walletId    String
+  wallet      Wallet          @relation(fields: [walletId], references: [id], onDelete: Cascade)
+  type        TransactionType
+  amountXAF   Int
+  description String?
+  createdAt   DateTime        @default(now())
+
+  @@index([walletId])
+  @@map("transactions")
+}
+
+model Payout {
+  id          String       @id @default(uuid())
+  userId      String
+  user        User         @relation(fields: [userId], references: [id])
+  amountXAF   Int
+  method      String       @default("wallet")
+  phone       String       @default("")
+  status      PayoutStatus @default(pending)
+  createdAt   DateTime     @default(now())
+  updatedAt   DateTime     @updatedAt
+
+  @@index([userId])
+  @@map("payouts")
+}
+
+// ─────────────────────────────────────────────────────────────
+// EVENTS
+// ─────────────────────────────────────────────────────────────
+
+model Event {
+  id          String   @id @default(uuid())
+  organizerId String
+  organizer   User     @relation("EventOrganizer", fields: [organizerId], references: [id])
+  title       String
+  description String?
+  category    String?
+  imageUrl    String?
+  location    String?
+  city        String?
+  tags        String[]
+  isOnline    Boolean  @default(false)
+  streamUrl   String?
+  startAt     DateTime
+  endAt       DateTime
+  priceXAF    Int      @default(0)
+  maxSeats    Int?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  registrations EventRegistration[]
+
+  @@index([category])
+  @@map("events")
+}
+
+model EventRegistration {
+  id        String   @id @default(uuid())
+  eventId   String
+  event     Event    @relation(fields: [eventId], references: [id], onDelete: Cascade)
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  createdAt DateTime @default(now())
+
+  @@unique([eventId, userId])
+  @@map("event_registrations")
+}
+
+// ─────────────────────────────────────────────────────────────
+// COURSES
+// ─────────────────────────────────────────────────────────────
+
+model Course {
+  id            String      @id @default(uuid())
+  instructorId  String
+  instructor    User        @relation("CourseInstructor", fields: [instructorId], references: [id])
+  title         String
+  description   String?
+  priceXAF      Int         @default(0)
+  imageUrl      String?
+  level         CourseLevel @default(beginner)
+  isCertified   Boolean     @default(false)
+  createdAt     DateTime    @default(now())
+  updatedAt     DateTime    @updatedAt
+
+  lessons     Lesson[]
+  enrollments Enrollment[]
+
+  @@map("courses")
+}
+
+model Lesson {
+  id           String   @id @default(uuid())
+  courseId     String
+  course       Course   @relation(fields: [courseId], references: [id], onDelete: Cascade)
+  title        String
+  videoUrl     String?
+  duration     Int?
+  order        Int
+  sectionTitle String?
+
+  progress LessonProgress[]
+
+  @@index([courseId])
+  @@map("lessons")
+}
+
+model Enrollment {
+  id       String    @id @default(uuid())
+  courseId String
+  course   Course    @relation(fields: [courseId], references: [id], onDelete: Cascade)
+  userId   String
+  user     User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  paidAt   DateTime?
+
+  progress LessonProgress[]
+
+  @@unique([courseId, userId])
+  @@map("enrollments")
+}
+
+model LessonProgress {
+  id           String     @id @default(uuid())
+  enrollmentId String
+  enrollment   Enrollment @relation(fields: [enrollmentId], references: [id], onDelete: Cascade)
+  lessonId     String
+  lesson       Lesson     @relation(fields: [lessonId], references: [id], onDelete: Cascade)
+  completedAt  DateTime   @default(now())
+
+  @@unique([enrollmentId, lessonId])
+  @@map("lesson_progress")
+}
+
+// ─────────────────────────────────────────────────────────────
+// GAMES
+// ─────────────────────────────────────────────────────────────
+
+model UserXP {
+  id     String @id @default(uuid())
+  userId String @unique
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+  points Int    @default(0)
+  level  Int    @default(1)
+
+  @@map("user_xp")
+}
+
+model LeaderboardEntry {
+  id        String            @id @default(uuid())
+  userId    String
+  user      User              @relation(fields: [userId], references: [id], onDelete: Cascade)
+  period    LeaderboardPeriod
+  points    Int               @default(0)
+  rank      Int?
+  updatedAt DateTime          @updatedAt
+
+  @@unique([userId, period])
+  @@map("leaderboard_entries")
+}
+
+model QuizQuestion {
+  id            String @id @default(uuid())
+  question      String
+  options       Json
+  correctIndex  Int
+  category      String?
+  difficulty    String?
+
+  @@map("quiz_questions")
+}
+
+model Tombola {
+  id                String   @id @default(uuid())
+  title             String
+  drawAt            DateTime
+  pricePerTicketXAF Int
+  maxTickets        Int
+  prizes            Json
+  isActive          Boolean  @default(true)
+  createdAt         DateTime @default(now())
+
+  tickets TombolaTicket[]
+
+  @@map("tombolas")
+}
+
+model TombolaTicket {
+  id            String   @id @default(uuid())
+  tombolaId     String
+  tombola       Tombola  @relation(fields: [tombolaId], references: [id], onDelete: Cascade)
+  userId        String
+  user          User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  ticketNumber  Int
+  purchasedAt   DateTime @default(now())
+
+  @@unique([tombolaId, ticketNumber])
+  @@map("tombola_tickets")
+}
+
+model Badge {
+  id              String @id @default(uuid())
+  name            String
+  nameEN          String
+  description     String
+  descriptionEN   String
+  icon            String
+  color           String
+  category        String
+  xpReward        Int    @default(0)
+
+  userBadges UserBadge[]
+
+  @@map("badges")
+}
+
+model UserBadge {
+  id       String   @id @default(uuid())
+  badgeId  String
+  badge    Badge    @relation(fields: [badgeId], references: [id], onDelete: Cascade)
+  userId   String
+  user     User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  earnedAt DateTime @default(now())
+
+  @@unique([badgeId, userId])
+  @@map("user_badges")
+}
+
+// ─────────────────────────────────────────────────────────────
+// COMMUNITY (forum — PostgreSQL side)
+// ─────────────────────────────────────────────────────────────
+
+model ForumThread {
+  id        String   @id @default(uuid())
+  userId    String
+  user      User     @relation(fields: [userId], references: [id])
+  title     String
+  content   String
+  tags      String[]
+  likes     String[] @default([])
+  views     Int      @default(0)
+  createdAt DateTime @default(now())
+
+  replies ForumReply[]
+
+  @@map("forum_threads")
+}
+
+model ForumReply {
+  id        String      @id @default(uuid())
+  threadId  String
+  thread    ForumThread @relation(fields: [threadId], references: [id], onDelete: Cascade)
+  userId    String
+  user      User        @relation(fields: [userId], references: [id])
+  content   String
+  likes     String[]    @default([])
+  createdAt DateTime    @default(now())
+
+  @@index([threadId])
+  @@map("forum_replies")
+}
+
+// ─────────────────────────────────────────────────────────────
+// PRO
+// ─────────────────────────────────────────────────────────────
+
+model ProRequest {
+  id               String           @id @default(uuid())
+  userId           String
+  user             User             @relation(fields: [userId], references: [id])
+  businessName     String
+  businessType     String
+  phone            String
+  address          String
+  description      String?
+  status           ProRequestStatus @default(pending)
+  rejectionReason  String?
+  createdAt        DateTime         @default(now())
+  updatedAt        DateTime         @updatedAt
+
+  @@index([userId])
+  @@map("pro_requests")
+}
+
+model ProProfile {
+  id              String   @id @default(uuid())
+  userId          String   @unique
+  user            User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  businessName    String
+  rating          Float    @default(0)
+  totalOrders     Int      @default(0)
+  totalRevenueXAF Int      @default(0)
+
+  @@map("pro_profiles")
+}
+
+model Promo {
+  id                String     @id @default(uuid())
+  restaurantId      String
+  restaurant        Restaurant @relation(fields: [restaurantId], references: [id], onDelete: Cascade)
+  title             String
+  discountPercent   Int?
+  discountXAF       Int?
+  validFrom         DateTime
+  validUntil        DateTime
+  createdAt         DateTime   @default(now())
+
+  @@index([restaurantId])
+  @@map("promos")
+}
+
+model ProMessage {
+  id          String   @id @default(uuid())
+  recipientId String
+  recipient   User     @relation("ProMessageRecipient", fields: [recipientId], references: [id], onDelete: Cascade)
+  senderName  String
+  subject     String
+  body        String
+  isRead      Boolean  @default(false)
+  createdAt   DateTime @default(now())
+
+  @@index([recipientId])
+  @@map("pro_messages")
+}
+
+// ─────────────────────────────────────────────────────────────
+// ADMIN
+// ─────────────────────────────────────────────────────────────
+
+model SystemSetting {
+  id                String   @id @default("singleton")
+  maintenanceMode   Boolean  @default(false)
+  registrationsOpen Boolean  @default(true)
+  aiEnabled         Boolean  @default(true)
+  commissionPct     Float    @default(10)
+  updatedAt         DateTime @updatedAt
+
+  @@map("system_settings")
+}
+
+model SystemLog {
+  id        String   @id @default(uuid())
+  level     LogLevel
+  message   String
+  context   Json?
+  createdAt DateTime @default(now())
+
+  @@index([level])
+  @@map("system_logs")
+}
+
+// ─────────────────────────────────────────────────────────────
+// RECIPES
+// ─────────────────────────────────────────────────────────────
+
+model Recipe {
+  id          String           @id @default(uuid())
+  name        String
+  nameEN      String?
+  region      String
+  description String?
+  imageUrl    String?
+  videoUrl    String?
+  duration    Int
+  servings    Int
+  difficulty  RecipeDifficulty @default(easy)
+  calories    Int?
+  rating      Float            @default(0)
+  ratingCount Int              @default(0)
+  spiceLevel  Int              @default(1)
+  cookType    String?
+  tags        String[]
+  createdAt   DateTime         @default(now())
+  updatedAt   DateTime         @updatedAt
+
+  ingredients RecipeIngredient[]
+  steps       RecipeStep[]
+
+  @@index([region])
+  @@map("recipes")
+}
+
+model RecipeIngredient {
+  id       String  @id @default(uuid())
+  recipeId String
+  recipe   Recipe  @relation(fields: [recipeId], references: [id], onDelete: Cascade)
+  name     String
+  nameEN   String?
+  quantity String
+  unit     String?
+  order    Int     @default(0)
+
+  @@index([recipeId])
+  @@map("recipe_ingredients")
+}
+
+model RecipeStep {
+  id          String  @id @default(uuid())
+  recipeId    String
+  recipe      Recipe  @relation(fields: [recipeId], references: [id], onDelete: Cascade)
+  order       Int
+  title       String?
+  description String
+  durationMin Int?
+  imageUrl    String?
+
+  @@index([recipeId])
+  @@map("recipe_steps")
+}

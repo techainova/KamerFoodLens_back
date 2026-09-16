@@ -11,6 +11,7 @@ import * as bcrypt from 'bcryptjs';
 import * as crypto from 'crypto';
 import Redis from 'ioredis';
 import * as nodemailer from 'nodemailer';
+import { OAuth2Client } from 'google-auth-library';
 import { Role, User } from '@prisma/client';
 import { v4 as uuid } from 'uuid';
 import { PrismaService } from '../../prisma/prisma.service';
@@ -19,6 +20,21 @@ import { RegisterDto } from './dto/register.dto';
 import { LoginDto } from './dto/login.dto';
 import { VerifyOtpDto } from './dto/verify-otp.dto';
 import { GoogleProfilePayload } from './strategies/google.strategy';
+import {
+  renderOtpEmail,
+  renderPasswordResetEmail,
+  renderWelcomeEmail,
+  KFL_LOGO_ATTACHMENT,
+} from '../../common/emails/email-templates';
+
+interface PendingRegistration {
+  email: string;
+  passwordHash: string;
+  firstName: string;
+  lastName: string;
+  phone?: string;
+  username?: string;
+}
 
 export interface TokenPair {
   accessToken: string;
@@ -42,12 +58,15 @@ export interface AuthResponse {
 }
 
 const OTP_TTL_SECONDS = 10 * 60;
+const PENDING_REGISTRATION_TTL_SECONDS = 10 * 60;
 const REFRESH_TOKEN_PREFIX = 'refresh_token:';
 const RESET_TOKEN_PREFIX = 'reset_token:';
+const PENDING_REGISTRATION_PREFIX = 'pending_registration:';
 
 @Injectable()
 export class AuthService {
   private readonly mailTransporter: nodemailer.Transporter;
+  private readonly googleClient: OAuth2Client;
 
   public constructor(
     private readonly prisma: PrismaService,
@@ -64,9 +83,10 @@ export class AuthService {
         pass: this.configService.get<string>('SMTP_PASS'),
       },
     });
+    this.googleClient = new OAuth2Client(this.configService.get<string>('GOOGLE_WEB_CLIENT_ID'));
   }
 
-  public async register(dto: RegisterDto): Promise<{ user: PublicUser }> {
+  public async register(dto: RegisterDto): Promise<{ message: string; email: string }> {
     const existing = await this.prisma.user.findUnique({ where: { email: dto.email } });
     if (existing) {
       throw new ConflictException('An account with this email already exists');
@@ -74,26 +94,27 @@ export class AuthService {
 
     const passwordHash = await bcrypt.hash(dto.password, 12);
 
-    const user = await this.prisma.user.create({
-      data: {
-        email: dto.email,
-        passwordHash,
-        firstName: dto.firstName,
-        lastName: dto.lastName,
-        phone: dto.phone,
-        username: dto.username,
-        // Every registration starts as a standard account, regardless of isBusiness.
-        // That flag only signals the client to prompt a follow-up POST /pro/upgrade request.
-        role: Role.standard,
-      },
-    });
+    // The account is intentionally NOT created yet — only a pending registration is cached
+    // in Redis. The User/Wallet/UserXP rows are created in verifyOtp() once the code is
+    // confirmed, so an email that never verifies never leaves a real account behind.
+    const pending: PendingRegistration = {
+      email: dto.email,
+      passwordHash,
+      firstName: dto.firstName,
+      lastName: dto.lastName,
+      phone: dto.phone,
+      username: dto.username,
+    };
+    await this.redis.set(
+      this.pendingRegistrationKey(dto.email),
+      JSON.stringify(pending),
+      'EX',
+      PENDING_REGISTRATION_TTL_SECONDS,
+    );
 
-    await this.prisma.wallet.create({ data: { userId: user.id, balanceXAF: 0 } });
-    await this.prisma.userXP.create({ data: { userId: user.id, points: 0, level: 1 } });
+    await this.sendOtp(dto.email, 'email_verification');
 
-    await this.sendOtp(user.email, 'email_verification');
-
-    return { user: this.toPublicUser(user) };
+    return { message: 'Verification code sent', email: dto.email };
   }
 
   public async login(dto: LoginDto): Promise<AuthResponse> {
@@ -117,33 +138,55 @@ export class AuthService {
   }
 
   public async verifyOtp(dto: VerifyOtpDto): Promise<AuthResponse> {
-    const user = await this.prisma.user.findUnique({ where: { email: dto.email } });
-    if (!user) {
-      throw new BadRequestException('No account found for this email');
-    }
-
     const storedOtp = await this.redis.get(this.otpKey(dto.email));
     if (!storedOtp || storedOtp !== dto.otp) {
       throw new BadRequestException('Invalid or expired verification code');
     }
 
-    await this.redis.del(this.otpKey(dto.email));
+    const pendingRaw = await this.redis.get(this.pendingRegistrationKey(dto.email));
+    if (!pendingRaw) {
+      throw new BadRequestException('Registration expired or not found — please sign up again');
+    }
+    const pending = JSON.parse(pendingRaw) as PendingRegistration;
 
-    const updated = await this.prisma.user.update({
-      where: { id: user.id },
-      data: { isEmailVerified: true },
+    const existing = await this.prisma.user.findUnique({ where: { email: pending.email } });
+    if (existing) {
+      throw new ConflictException('An account with this email already exists');
+    }
+
+    const user = await this.prisma.user.create({
+      data: {
+        email: pending.email,
+        passwordHash: pending.passwordHash,
+        firstName: pending.firstName,
+        lastName: pending.lastName,
+        phone: pending.phone,
+        username: pending.username,
+        // Every registration starts as a standard account, regardless of isBusiness.
+        // That flag only signals the client to prompt a follow-up POST /pro/upgrade request.
+        role: Role.standard,
+        isEmailVerified: true,
+      },
     });
 
-    const tokens = await this.issueTokenPair(updated);
-    return { ...tokens, user: this.toPublicUser(updated) };
+    await this.prisma.wallet.create({ data: { userId: user.id, balanceXAF: 0 } });
+    await this.prisma.userXP.create({ data: { userId: user.id, points: 0, level: 1 } });
+
+    await this.redis.del(this.otpKey(dto.email), this.pendingRegistrationKey(dto.email));
+
+    await this.sendWelcomeEmail(user.email, user.firstName);
+
+    const tokens = await this.issueTokenPair(user);
+    return { ...tokens, user: this.toPublicUser(user) };
   }
 
   public async resendOtp(email: string): Promise<{ message: string }> {
-    const user = await this.prisma.user.findUnique({ where: { email } });
-    if (!user) {
-      throw new BadRequestException('No account found for this email');
+    const pendingRaw = await this.redis.get(this.pendingRegistrationKey(email));
+    if (!pendingRaw) {
+      throw new BadRequestException('No pending registration found for this email');
     }
 
+    await this.redis.expire(this.pendingRegistrationKey(email), PENDING_REGISTRATION_TTL_SECONDS);
     await this.sendOtp(email, 'email_verification');
     return { message: 'Verification code resent' };
   }
@@ -203,7 +246,8 @@ export class AuthService {
         from: this.configService.get<string>('SMTP_FROM'),
         to: user.email,
         subject: 'KmerFoodLens — Réinitialisation du mot de passe',
-        html: `<p>Votre code de réinitialisation est : <strong>${resetToken}</strong></p>`,
+        html: renderPasswordResetEmail(resetToken),
+        attachments: [KFL_LOGO_ATTACHMENT],
       });
     } catch (error) {
       // eslint-disable-next-line no-console
@@ -273,6 +317,40 @@ export class AuthService {
     return { ...tokens, user: this.toPublicUser(user) };
   }
 
+  // Used by the web (Google Identity Services) and native (Android/iOS) Sign-In flows alike:
+  // the client obtains a signed ID token directly from Google, and we verify it server-side
+  // rather than trusting a client-asserted profile. Each platform's OAuth client produces a
+  // token whose `aud` claim is that platform's own client ID, so all three must be accepted.
+  public async loginWithGoogleIdToken(idToken: string): Promise<AuthResponse> {
+    const audience = [
+      this.configService.get<string>('GOOGLE_WEB_CLIENT_ID'),
+      this.configService.get<string>('GOOGLE_ANDROID_CLIENT_ID'),
+      this.configService.get<string>('GOOGLE_IOS_CLIENT_ID'),
+    ].filter((id): id is string => Boolean(id));
+
+    let payload;
+    try {
+      const ticket = await this.googleClient.verifyIdToken({ idToken, audience });
+      payload = ticket.getPayload();
+    } catch {
+      throw new UnauthorizedException('Invalid Google ID token');
+    }
+
+    if (!payload?.email) {
+      throw new UnauthorizedException('Google token did not include an email address');
+    }
+
+    const profile: GoogleProfilePayload = {
+      googleId: payload.sub,
+      email: payload.email,
+      firstName: payload.given_name ?? payload.name ?? 'Utilisateur',
+      lastName: payload.family_name ?? '',
+      avatar: payload.picture,
+    };
+
+    return this.loginWithGoogle(profile);
+  }
+
   private async issueTokenPair(user: User): Promise<TokenPair> {
     const accessToken = this.jwtService.sign(
       { sub: user.id, email: user.email, role: user.role },
@@ -315,7 +393,8 @@ export class AuthService {
         from: this.configService.get<string>('SMTP_FROM'),
         to: email,
         subject: 'KmerFoodLens — Code de vérification',
-        html: `<p>Votre code de vérification (${purpose}) est : <strong>${otp}</strong></p><p>Il expire dans 10 minutes.</p>`,
+        html: renderOtpEmail(otp),
+        attachments: [KFL_LOGO_ATTACHMENT],
       });
     } catch (error) {
       // The OTP is already stored in Redis and can still be verified/resent —
@@ -325,8 +404,28 @@ export class AuthService {
     }
   }
 
+  private async sendWelcomeEmail(email: string, firstName: string): Promise<void> {
+    try {
+      await this.mailTransporter.sendMail({
+        from: this.configService.get<string>('SMTP_FROM'),
+        to: email,
+        subject: 'Bienvenue sur KmerFoodLens !',
+        html: renderWelcomeEmail(firstName),
+        attachments: [KFL_LOGO_ATTACHMENT],
+      });
+    } catch (error) {
+      // Account creation must not fail just because the welcome email couldn't be sent.
+      // eslint-disable-next-line no-console
+      console.error(`Failed to send welcome email to ${email}:`, error instanceof Error ? error.message : error);
+    }
+  }
+
   private otpKey(email: string): string {
     return `otp:${email}`;
+  }
+
+  private pendingRegistrationKey(email: string): string {
+    return `${PENDING_REGISTRATION_PREFIX}${email}`;
   }
 
   private toPublicUser(user: User): PublicUser {

@@ -152,6 +152,10 @@ model User {
   notifications       Notification[]
   proMessages         ProMessage[]      @relation("ProMessageRecipient")
   payoutsRequested    Payout[]
+  deviceTokens        DeviceToken[]
+  conversationsAsA    Conversation[]    @relation("ConversationUserA")
+  conversationsAsB    Conversation[]    @relation("ConversationUserB")
+  sentMessages        Message[]         @relation("MessageSender")
 
   @@index([email])
   @@map("users")
@@ -169,6 +173,18 @@ model Otp {
 
   @@index([userId])
   @@map("otps")
+}
+
+model DeviceToken {
+  id        String   @id @default(uuid())
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  token     String   @unique
+  platform  String
+  createdAt DateTime @default(now())
+
+  @@index([userId])
+  @@map("device_tokens")
 }
 
 model FavoriteItem {
@@ -641,6 +657,13 @@ model ProProfile {
   totalOrders     Int      @default(0)
   totalRevenueXAF Int      @default(0)
 
+  acceptsMtn    Boolean @default(false)
+  acceptsOrange Boolean @default(false)
+  acceptsCard   Boolean @default(false)
+  acceptsCash   Boolean @default(true)
+  mtnPhone      String?
+  orangePhone   String?
+
   @@map("pro_profiles")
 }
 
@@ -671,6 +694,40 @@ model ProMessage {
 
   @@index([recipientId])
   @@map("pro_messages")
+}
+
+// Messagerie directe utilisateur <-> restaurant (distincte de ProMessage
+// ci-dessus, qui est un inbox à sens unique système -> pro). Une conversation
+// par paire d'utilisateurs — userAId/userBId toujours stockés triés
+// lexicographiquement par MessagesService pour garantir l'unicité peu importe
+// qui a initié l'échange.
+model Conversation {
+  id        String    @id @default(uuid())
+  userAId   String
+  userA     User      @relation("ConversationUserA", fields: [userAId], references: [id], onDelete: Cascade)
+  userBId   String
+  userB     User      @relation("ConversationUserB", fields: [userBId], references: [id], onDelete: Cascade)
+  messages  Message[]
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
+
+  @@unique([userAId, userBId])
+  @@index([userBId])
+  @@map("conversations")
+}
+
+model Message {
+  id             String       @id @default(uuid())
+  conversationId String
+  conversation   Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+  senderId       String
+  sender         User         @relation("MessageSender", fields: [senderId], references: [id], onDelete: Cascade)
+  text           String
+  isRead         Boolean      @default(false)
+  createdAt      DateTime     @default(now())
+
+  @@index([conversationId])
+  @@map("messages")
 }
 
 // ─────────────────────────────────────────────────────────────

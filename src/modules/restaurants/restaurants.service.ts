@@ -26,6 +26,7 @@ export interface RestaurantView {
   phone?: string;
   hoursLabel?: string;
   isVerified: boolean;
+  ownerId: string;
 }
 
 export interface MenuItemView {
@@ -266,6 +267,7 @@ export class RestaurantsService {
       phone: restaurant.phone ?? undefined,
       hoursLabel: restaurant.hoursLabel ?? undefined,
       isVerified: restaurant.isVerified,
+      ownerId: restaurant.ownerId,
     };
   }
 

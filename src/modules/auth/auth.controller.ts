@@ -5,7 +5,7 @@ import { Throttle } from '@nestjs/throttler';
 import { FastifyReply } from 'fastify';
 import { Public } from '../../common/decorators/public.decorator';
 import { CurrentUser, AuthenticatedUser } from '../../common/decorators/current-user.decorator';
-import { AuthResponse, AuthService, PublicUser, TokenPair } from './auth.service';
+import { AuthResponse, AuthService, TokenPair } from './auth.service';
 import { RegisterDto } from './dto/register.dto';
 import { LoginDto } from './dto/login.dto';
 import { VerifyOtpDto } from './dto/verify-otp.dto';
@@ -13,6 +13,7 @@ import { RefreshTokenDto } from './dto/refresh-token.dto';
 import { ForgotPasswordDto } from './dto/forgot-password.dto';
 import { ResetPasswordDto } from './dto/reset-password.dto';
 import { ChangePasswordDto } from './dto/change-password.dto';
+import { GoogleTokenDto } from './dto/google-token.dto';
 import { GoogleProfilePayload } from './strategies/google.strategy';
 
 interface GoogleRequest {
@@ -27,9 +28,9 @@ export class AuthController {
 
   @Public()
   @Post('register')
-  @ApiOperation({ summary: 'Register a new standard user account' })
-  @ApiResponse({ status: 201, description: 'User created, OTP sent by email' })
-  public async register(@Body() dto: RegisterDto): Promise<{ user: PublicUser }> {
+  @ApiOperation({ summary: 'Start registration: caches the account and sends an OTP — no account is created until it is verified' })
+  @ApiResponse({ status: 201, description: 'Verification code sent by email' })
+  public async register(@Body() dto: RegisterDto): Promise<{ message: string; email: string }> {
     return this.authService.register(dto);
   }
 
@@ -98,6 +99,14 @@ export class AuthController {
     @Body() dto: ChangePasswordDto,
   ): Promise<{ message: string }> {
     return this.authService.changePassword(user.id, dto.currentPassword, dto.newPassword);
+  }
+
+  @Public()
+  @Post('google/token')
+  @ApiOperation({ summary: 'Log in or register using a Google Identity Services ID token (web Sign-In)' })
+  @ApiResponse({ status: 200, description: 'Returns access/refresh tokens and the user profile' })
+  public async googleToken(@Body() dto: GoogleTokenDto): Promise<AuthResponse> {
+    return this.authService.loginWithGoogleIdToken(dto.idToken);
   }
 
   @Public()

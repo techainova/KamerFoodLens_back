@@ -3,6 +3,7 @@ import { Event, Prisma } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
 import { CreateEventDto } from './dto/create-event.dto';
 import { UpdateEventDto } from './dto/update-event.dto';
+import { EventsGateway } from './events.gateway';
 
 export interface EventView {
   id: string;
@@ -45,7 +46,10 @@ const EVENT_INCLUDE = {
 
 @Injectable()
 export class EventsService {
-  public constructor(private readonly prisma: PrismaService) {}
+  public constructor(
+    private readonly prisma: PrismaService,
+    private readonly eventsGateway: EventsGateway,
+  ) {}
 
   public async findAll(category: string | undefined, page: number): Promise<ListResult<EventView>> {
     const skip = (page - 1) * PAGE_SIZE;
@@ -122,7 +126,7 @@ export class EventsService {
   }
 
   public async create(organizerId: string, dto: CreateEventDto): Promise<Event> {
-    return this.prisma.event.create({
+    const event = await this.prisma.event.create({
       data: {
         organizerId,
         title: dto.title,
@@ -140,6 +144,13 @@ export class EventsService {
         maxSeats: dto.maxSeats,
       },
     });
+    // Diffusion instantanée à tous les comptes connectés — sans ça, un
+    // événement créé n'apparaît ailleurs qu'au prochain fetch manuel. On
+    // re-résout la vue complète (organisateur, compteurs) plutôt que
+    // d'envoyer la ligne Prisma brute, pour correspondre exactement à la
+    // forme que le front reçoit déjà via GET /events.
+    this.eventsGateway.broadcastNewEvent(await this.findById(event.id));
+    return event;
   }
 
   public async update(organizerId: string, eventId: string, dto: UpdateEventDto): Promise<Event> {

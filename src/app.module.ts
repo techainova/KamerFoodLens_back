@@ -33,6 +33,7 @@ import { CommunityModule } from './modules/community/community.module';
 import { AdminModule } from './modules/admin/admin.module';
 import { ProModule } from './modules/pro/pro.module';
 import { RecipesModule } from './modules/recipes/recipes.module';
+import { MessagesModule } from './modules/messages/messages.module';
 
 @Module({
   imports: [
@@ -91,6 +92,7 @@ import { RecipesModule } from './modules/recipes/recipes.module';
     ProModule,
     AdminModule,
     RecipesModule,
+    MessagesModule,
   ],
   providers: [
     { provide: APP_FILTER, useClass: HttpExceptionFilter },

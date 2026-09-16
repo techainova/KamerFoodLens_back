@@ -5,6 +5,11 @@ export enum PostType {
   post = 'post',
   recipe = 'recipe',
   review = 'review',
+  // Réservé aux comptes pro (vérifié dans CommunityService.createPost) — une
+  // annonce d'événement légère dans le fil, distincte du module Events complet
+  // (inscriptions, billetterie) : pas de date/lieu structurés, juste un post
+  // mis en avant visuellement.
+  event = 'event',
 }
 
 export class CreatePostDto {

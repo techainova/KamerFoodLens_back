@@ -32,6 +32,23 @@ services:
     volumes:
       - kfl_redis_data:/data
 
+  # Local S3-compatible object storage (avatars, community images, scan photos) — stands in
+  # for AWS S3 during development, using the machine's own disk via a Docker volume instead
+  # of a real AWS account. Swap back to real S3 later by unsetting AWS_ENDPOINT in .env.
+  minio:
+    image: minio/minio:latest
+    container_name: kfl-minio
+    restart: unless-stopped
+    environment:
+      MINIO_ROOT_USER: kfl_minio_admin
+      MINIO_ROOT_PASSWORD: kfl_minio_secret
+    command: server /data --console-address ":9001"
+    ports:
+      - "9000:9000"
+      - "9001:9001"
+    volumes:
+      - kfl_minio_data:/data
+
   api:
     build:
       context: .
@@ -46,8 +63,10 @@ services:
       - postgres
       - mongodb
       - redis
+      - minio
 
 volumes:
   kfl_postgres_data:
   kfl_mongo_data:
   kfl_redis_data:
+  kfl_minio_data:

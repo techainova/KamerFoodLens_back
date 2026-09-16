@@ -3,10 +3,13 @@ import { InjectModel } from '@nestjs/mongoose';
 import { Badge, FavoriteItem, FavoriteType, Notification, User } from '@prisma/client';
 import { Model } from 'mongoose';
 import { PrismaService } from '../../prisma/prisma.service';
+import { S3UploadService } from '../../common/services/s3-upload.service';
 import { JournalEntry, JournalEntryDocument } from './schemas/journal-entry.schema';
 import { UpdateProfileDto } from './dto/update-profile.dto';
 import { AddFavoriteDto } from './dto/add-favorite.dto';
 import { AddJournalDto } from './dto/add-journal.dto';
+import { UploadAvatarDto } from './dto/upload-avatar.dto';
+import { RegisterDeviceTokenDto } from './dto/register-device-token.dto';
 
 export interface BadgeWithStatus extends Badge {
   isEarned: boolean;
@@ -54,6 +57,7 @@ const PAGE_SIZE = 20;
 export class UsersService {
   public constructor(
     private readonly prisma: PrismaService,
+    private readonly s3UploadService: S3UploadService,
     @InjectModel(JournalEntry.name) private readonly journalModel: Model<JournalEntryDocument>,
   ) {}
 
@@ -68,6 +72,30 @@ export class UsersService {
   public async updateMe(userId: string, dto: UpdateProfileDto): Promise<UserProfile> {
     const user = await this.prisma.user.update({ where: { id: userId }, data: dto });
     return this.toUserProfile(user);
+  }
+
+  public async uploadAvatar(userId: string, dto: UploadAvatarDto): Promise<UserProfile> {
+    const avatarUrl = await this.s3UploadService.uploadBase64Image(
+      dto.imageBase64,
+      dto.mimeType ?? 'image/jpeg',
+      'avatars',
+    );
+    const user = await this.prisma.user.update({ where: { id: userId }, data: { avatar: avatarUrl } });
+    return this.toUserProfile(user);
+  }
+
+  public async registerDeviceToken(userId: string, dto: RegisterDeviceTokenDto): Promise<{ message: string }> {
+    await this.prisma.deviceToken.upsert({
+      where: { token: dto.token },
+      update: { userId, platform: dto.platform },
+      create: { userId, token: dto.token, platform: dto.platform },
+    });
+    return { message: 'Device token registered' };
+  }
+
+  public async unregisterDeviceToken(userId: string, token: string): Promise<{ message: string }> {
+    await this.prisma.deviceToken.deleteMany({ where: { userId, token } });
+    return { message: 'Device token removed' };
   }
 
   private async toUserProfile(user: User): Promise<UserProfile> {

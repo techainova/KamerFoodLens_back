@@ -7,8 +7,10 @@ import { UpgradeProDto } from './dto/upgrade-pro.dto';
 import { CreatePromoDto } from './dto/create-promo.dto';
 import { RequestPayoutDto } from './dto/request-payout.dto';
 import { UpdateOrderStatusDto } from './dto/update-order-status.dto';
+import { UpdatePaymentMethodsDto } from './dto/update-payment-methods.dto';
 import {
   PaymentMethodBreakdown,
+  PaymentMethodsView,
   ProOrderDetailView,
   ProOrderSummary,
   ProService,
@@ -174,6 +176,25 @@ export class ProController {
     @CurrentUser() user: AuthenticatedUser,
   ): Promise<{ plan: string; status: string; proProfile: unknown }> {
     return this.proService.getSubscription(user.id);
+  }
+
+  @Roles('pro', 'admin')
+  @Get('payment-methods')
+  @ApiOperation({ summary: 'Get accepted payment methods and mobile money numbers' })
+  @ApiResponse({ status: 200, description: 'Payment methods configuration' })
+  public async getPaymentMethods(@CurrentUser() user: AuthenticatedUser): Promise<PaymentMethodsView> {
+    return this.proService.getPaymentMethods(user.id);
+  }
+
+  @Roles('pro', 'admin')
+  @Patch('payment-methods')
+  @ApiOperation({ summary: 'Update accepted payment methods and mobile money numbers' })
+  @ApiResponse({ status: 200, description: 'Updated payment methods configuration' })
+  public async updatePaymentMethods(
+    @CurrentUser() user: AuthenticatedUser,
+    @Body() dto: UpdatePaymentMethodsDto,
+  ): Promise<PaymentMethodsView> {
+    return this.proService.updatePaymentMethods(user.id, dto);
   }
 
   @Roles('pro', 'admin')

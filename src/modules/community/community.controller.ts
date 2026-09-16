@@ -6,12 +6,24 @@ import { CreatePostDto, CreateCommentDto } from './dto/create-post.dto';
 import { CreateThreadDto, CreateReplyDto } from './dto/create-thread.dto';
 import { CreateStoryDto } from './dto/create-story.dto';
 import {
+  ReactToStoryDto,
+  ReplyToStoryDto,
+  VoteStoryPollDto,
+  AnswerStoryQuizDto,
+  RateStorySliderDto,
+} from './dto/story-interaction.dto';
+import { CreateHighlightDto, AddToHighlightDto } from './dto/highlight.dto';
+import {
   CommunityService,
   ForumReplyView,
   ForumThreadDetailView,
   ForumThreadView,
   PostView,
   StoryView,
+  StoryViewerView,
+  StoryReplyView,
+  StoryHighlightSummaryView,
+  StoryHighlightDetailView,
 } from './community.service';
 
 interface PaginatedResult<T> {
@@ -129,12 +141,15 @@ export class CommunityController {
     return this.communityService.likeReply(user.id, id, replyId);
   }
 
-  @Public()
+  @ApiBearerAuth()
   @Get('stories')
   @ApiOperation({ summary: 'Get paginated active (non-expired) stories' })
   @ApiResponse({ status: 200, description: 'Paginated stories' })
-  public async getStories(@Query('page') page?: string): Promise<PaginatedResult<StoryView>> {
-    return this.communityService.getStories(page ? parseInt(page, 10) : 1);
+  public async getStories(
+    @CurrentUser() user: AuthenticatedUser,
+    @Query('page') page?: string,
+  ): Promise<PaginatedResult<StoryView>> {
+    return this.communityService.getStories(page ? parseInt(page, 10) : 1, user.id);
   }
 
   @ApiBearerAuth()
@@ -145,7 +160,7 @@ export class CommunityController {
     @CurrentUser() user: AuthenticatedUser,
     @Body() dto: CreateStoryDto,
   ): Promise<StoryView> {
-    return this.communityService.createStory(user.id, dto.imageBase64, dto.mimeType, dto.caption);
+    return this.communityService.createStory(user.id, dto);
   }
 
   @ApiBearerAuth()
@@ -157,5 +172,163 @@ export class CommunityController {
     @Param('id') id: string,
   ): Promise<{ message: string }> {
     return this.communityService.removeStory(user.id, id);
+  }
+
+  @ApiBearerAuth()
+  @Post('stories/:id/view')
+  @ApiOperation({ summary: 'Mark a story as viewed by the current user' })
+  @ApiResponse({ status: 201, description: 'Marked as viewed' })
+  public async viewStory(
+    @CurrentUser() user: AuthenticatedUser,
+    @Param('id') id: string,
+  ): Promise<{ message: string }> {
+    return this.communityService.markStoryViewed(user.id, id);
+  }
+
+  @ApiBearerAuth()
+  @Post('stories/:id/react')
+  @ApiOperation({ summary: 'Send an emoji reaction to a story' })
+  @ApiResponse({ status: 201, description: 'Reaction sent' })
+  public async reactToStory(
+    @CurrentUser() user: AuthenticatedUser,
+    @Param('id') id: string,
+    @Body() dto: ReactToStoryDto,
+  ): Promise<StoryView> {
+    return this.communityService.reactToStory(user.id, id, dto.emoji);
+  }
+
+  @ApiBearerAuth()
+  @Post('stories/:id/reply')
+  @ApiOperation({ summary: 'Reply to a story' })
+  @ApiResponse({ status: 201, description: 'Reply sent' })
+  public async replyToStory(
+    @CurrentUser() user: AuthenticatedUser,
+    @Param('id') id: string,
+    @Body() dto: ReplyToStoryDto,
+  ): Promise<{ message: string }> {
+    return this.communityService.replyToStory(user.id, id, dto.text);
+  }
+
+  @ApiBearerAuth()
+  @Post('stories/:id/poll/vote')
+  @ApiOperation({ summary: 'Vote on a story poll sticker' })
+  @ApiResponse({ status: 201, description: 'Updated story with vote tallies' })
+  public async voteStoryPoll(
+    @CurrentUser() user: AuthenticatedUser,
+    @Param('id') id: string,
+    @Body() dto: VoteStoryPollDto,
+  ): Promise<StoryView> {
+    return this.communityService.voteStoryPoll(user.id, id, dto.optionIndex);
+  }
+
+  @ApiBearerAuth()
+  @Post('stories/:id/quiz/answer')
+  @ApiOperation({ summary: 'Answer a story quiz sticker' })
+  @ApiResponse({ status: 201, description: 'Updated story with the correct answer revealed' })
+  public async answerStoryQuiz(
+    @CurrentUser() user: AuthenticatedUser,
+    @Param('id') id: string,
+    @Body() dto: AnswerStoryQuizDto,
+  ): Promise<StoryView> {
+    return this.communityService.answerStoryQuiz(user.id, id, dto.optionIndex);
+  }
+
+  @ApiBearerAuth()
+  @Post('stories/:id/slider/rate')
+  @ApiOperation({ summary: 'Rate a story slider sticker' })
+  @ApiResponse({ status: 201, description: 'Updated story with the slider average' })
+  public async rateStorySlider(
+    @CurrentUser() user: AuthenticatedUser,
+    @Param('id') id: string,
+    @Body() dto: RateStorySliderDto,
+  ): Promise<StoryView> {
+    return this.communityService.rateStorySlider(user.id, id, dto.value);
+  }
+
+  @ApiBearerAuth()
+  @Get('stories/:id/viewers')
+  @ApiOperation({ summary: 'List who viewed one of your own stories' })
+  @ApiResponse({ status: 200, description: 'Viewers list, most recent first' })
+  public async getStoryViewers(
+    @CurrentUser() user: AuthenticatedUser,
+    @Param('id') id: string,
+  ): Promise<StoryViewerView[]> {
+    return this.communityService.getStoryViewers(user.id, id);
+  }
+
+  @ApiBearerAuth()
+  @Get('stories/:id/replies')
+  @ApiOperation({ summary: 'Read the replies received on one of your own stories' })
+  @ApiResponse({ status: 200, description: 'Replies list, most recent first' })
+  public async getStoryReplies(
+    @CurrentUser() user: AuthenticatedUser,
+    @Param('id') id: string,
+  ): Promise<StoryReplyView[]> {
+    return this.communityService.getStoryReplies(user.id, id);
+  }
+
+  @ApiBearerAuth()
+  @Post('highlights')
+  @ApiOperation({ summary: 'Create a highlight from one of your own stories (makes it permanent)' })
+  @ApiResponse({ status: 201, description: 'Highlight created' })
+  public async createHighlight(
+    @CurrentUser() user: AuthenticatedUser,
+    @Body() dto: CreateHighlightDto,
+  ): Promise<StoryHighlightSummaryView> {
+    return this.communityService.createHighlight(user.id, dto);
+  }
+
+  @ApiBearerAuth()
+  @Post('highlights/:id/stories')
+  @ApiOperation({ summary: 'Add another of your stories to an existing highlight' })
+  @ApiResponse({ status: 201, description: 'Story added to the highlight' })
+  public async addStoryToHighlight(
+    @CurrentUser() user: AuthenticatedUser,
+    @Param('id') id: string,
+    @Body() dto: AddToHighlightDto,
+  ): Promise<StoryHighlightSummaryView> {
+    return this.communityService.addStoryToHighlight(user.id, id, dto.storyId);
+  }
+
+  @ApiBearerAuth()
+  @Delete('highlights/:id/stories/:storyId')
+  @ApiOperation({ summary: 'Remove a story from a highlight' })
+  @ApiResponse({ status: 200, description: 'Story removed from the highlight' })
+  public async removeStoryFromHighlight(
+    @CurrentUser() user: AuthenticatedUser,
+    @Param('id') id: string,
+    @Param('storyId') storyId: string,
+  ): Promise<StoryHighlightSummaryView> {
+    return this.communityService.removeStoryFromHighlight(user.id, id, storyId);
+  }
+
+  @ApiBearerAuth()
+  @Get('highlights/user/:userId')
+  @ApiOperation({ summary: "List a user's highlights (visible on their profile)" })
+  @ApiResponse({ status: 200, description: 'Highlights list' })
+  public async getUserHighlights(@Param('userId') userId: string): Promise<StoryHighlightSummaryView[]> {
+    return this.communityService.getUserHighlights(userId);
+  }
+
+  @ApiBearerAuth()
+  @Get('highlights/:id')
+  @ApiOperation({ summary: 'Get a highlight with all of its stories' })
+  @ApiResponse({ status: 200, description: 'Highlight detail' })
+  public async getHighlightDetail(
+    @CurrentUser() user: AuthenticatedUser,
+    @Param('id') id: string,
+  ): Promise<StoryHighlightDetailView> {
+    return this.communityService.getHighlightDetail(id, user.id);
+  }
+
+  @ApiBearerAuth()
+  @Delete('highlights/:id')
+  @ApiOperation({ summary: 'Delete a highlight (the underlying stories are kept)' })
+  @ApiResponse({ status: 200, description: 'Highlight removed' })
+  public async deleteHighlight(
+    @CurrentUser() user: AuthenticatedUser,
+    @Param('id') id: string,
+  ): Promise<{ message: string }> {
+    return this.communityService.deleteHighlight(user.id, id);
   }
 }

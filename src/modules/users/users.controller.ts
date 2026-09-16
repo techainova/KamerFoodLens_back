@@ -3,6 +3,8 @@ import { ApiBearerAuth, ApiOperation, ApiResponse, ApiTags } from '@nestjs/swagg
 import { Notification } from '@prisma/client';
 import { CurrentUser, AuthenticatedUser } from '../../common/decorators/current-user.decorator';
 import { UpdateProfileDto } from './dto/update-profile.dto';
+import { UploadAvatarDto } from './dto/upload-avatar.dto';
+import { RegisterDeviceTokenDto } from './dto/register-device-token.dto';
 import { AddFavoriteDto } from './dto/add-favorite.dto';
 import { AddJournalDto } from './dto/add-journal.dto';
 import {
@@ -35,6 +37,36 @@ export class UsersController {
     @Body() dto: UpdateProfileDto,
   ): Promise<UserProfile> {
     return this.usersService.updateMe(user.id, dto);
+  }
+
+  @Post('me/avatar')
+  @ApiOperation({ summary: 'Upload a new profile photo (base64) and set it as the avatar' })
+  @ApiResponse({ status: 201, description: 'Updated user profile with the new avatar URL' })
+  public async uploadAvatar(
+    @CurrentUser() user: AuthenticatedUser,
+    @Body() dto: UploadAvatarDto,
+  ): Promise<UserProfile> {
+    return this.usersService.uploadAvatar(user.id, dto);
+  }
+
+  @Post('me/push-token')
+  @ApiOperation({ summary: 'Register this device\'s push token for notifications' })
+  @ApiResponse({ status: 201, description: 'Token registered' })
+  public async registerDeviceToken(
+    @CurrentUser() user: AuthenticatedUser,
+    @Body() dto: RegisterDeviceTokenDto,
+  ): Promise<{ message: string }> {
+    return this.usersService.registerDeviceToken(user.id, dto);
+  }
+
+  @Delete('me/push-token/:token')
+  @ApiOperation({ summary: 'Unregister this device\'s push token' })
+  @ApiResponse({ status: 200, description: 'Token removed' })
+  public async unregisterDeviceToken(
+    @CurrentUser() user: AuthenticatedUser,
+    @Param('token') token: string,
+  ): Promise<{ message: string }> {
+    return this.usersService.unregisterDeviceToken(user.id, token);
   }
 
   @Get('badges')

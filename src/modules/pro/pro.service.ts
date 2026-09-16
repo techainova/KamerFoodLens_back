@@ -4,6 +4,16 @@ import { PrismaService } from '../../prisma/prisma.service';
 import { OrdersService } from '../orders/orders.service';
 import { UpgradeProDto } from './dto/upgrade-pro.dto';
 import { CreatePromoDto } from './dto/create-promo.dto';
+import { UpdatePaymentMethodsDto } from './dto/update-payment-methods.dto';
+
+export interface PaymentMethodsView {
+  acceptsMtn: boolean;
+  acceptsOrange: boolean;
+  acceptsCard: boolean;
+  acceptsCash: boolean;
+  mtnPhone: string | null;
+  orangePhone: string | null;
+}
 
 export interface ProStats {
   revenueXAF: number;
@@ -369,6 +379,35 @@ export class ProService {
   ): Promise<{ plan: string; status: string; proProfile: unknown }> {
     const proProfile = await this.prisma.proProfile.findUnique({ where: { userId } });
     return { plan: 'pro_standard', status: proProfile ? 'active' : 'inactive', proProfile };
+  }
+
+  public async getPaymentMethods(userId: string): Promise<PaymentMethodsView> {
+    const proProfile = await this.prisma.proProfile.findUnique({ where: { userId } });
+    if (!proProfile) {
+      throw new ForbiddenException('You do not have a Pro profile');
+    }
+    return this.toPaymentMethodsView(proProfile);
+  }
+
+  public async updatePaymentMethods(userId: string, dto: UpdatePaymentMethodsDto): Promise<PaymentMethodsView> {
+    const existing = await this.prisma.proProfile.findUnique({ where: { userId } });
+    if (!existing) {
+      throw new ForbiddenException('You do not have a Pro profile');
+    }
+    const proProfile = await this.prisma.proProfile.update({ where: { userId }, data: dto });
+    return this.toPaymentMethodsView(proProfile);
+  }
+
+  private toPaymentMethodsView(proProfile: {
+    acceptsMtn: boolean;
+    acceptsOrange: boolean;
+    acceptsCard: boolean;
+    acceptsCash: boolean;
+    mtnPhone: string | null;
+    orangePhone: string | null;
+  }): PaymentMethodsView {
+    const { acceptsMtn, acceptsOrange, acceptsCard, acceptsCash, mtnPhone, orangePhone } = proProfile;
+    return { acceptsMtn, acceptsOrange, acceptsCard, acceptsCash, mtnPhone, orangePhone };
   }
 
   public async requestPayout(

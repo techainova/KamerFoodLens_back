@@ -41,6 +41,7 @@ import * as Joi from 'joi';
         AWS_SECRET_ACCESS_KEY: Joi.string().allow('').optional(),
         AWS_S3_BUCKET: Joi.string().allow('').optional(),
         AWS_REGION: Joi.string().default('eu-west-3'),
+        AWS_ENDPOINT: Joi.string().allow('').optional(),
 
         ALLOWED_ORIGINS: Joi.string().required(),
 
@@ -49,6 +50,9 @@ import * as Joi from 'joi';
         GOOGLE_CLIENT_ID: Joi.string().allow('').optional(),
         GOOGLE_CLIENT_SECRET: Joi.string().allow('').optional(),
         GOOGLE_CALLBACK_URL: Joi.string().allow('').optional(),
+        GOOGLE_WEB_CLIENT_ID: Joi.string().allow('').optional(),
+        GOOGLE_ANDROID_CLIENT_ID: Joi.string().allow('').optional(),
+        GOOGLE_IOS_CLIENT_ID: Joi.string().allow('').optional(),
       }),
       validationOptions: {
         allowUnknown: true,

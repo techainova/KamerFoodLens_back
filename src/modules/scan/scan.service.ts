@@ -56,7 +56,7 @@ export class ScanService {
     private readonly s3UploadService: S3UploadService,
   ) {}
 
-  public async scanImage(userId: string, dto: ScanImageDto): Promise<ScanResponse> {
+  public async scanImage(userId: string | undefined, dto: ScanImageDto): Promise<ScanResponse> {
     const mimeType = dto.mimeType ?? 'image/jpeg';
     const imageBuffer = Buffer.from(dto.imageBase64, 'base64');
 
@@ -64,11 +64,13 @@ export class ScanService {
 
     const imageUrl = await this.s3UploadService.uploadBase64Image(dto.imageBase64, mimeType, 'scans');
 
-    const scanId = await this.persistScanResult(userId, prediction, 'image', imageUrl);
+    const scanId = userId
+      ? await this.persistScanResult(userId, prediction, 'image', imageUrl)
+      : this.anonymousScanId();
     return this.toScanResponse(scanId, prediction, imageUrl);
   }
 
-  public async scanAudio(userId: string, dto: ScanAudioDto): Promise<ScanResponse> {
+  public async scanAudio(userId: string | undefined, dto: ScanAudioDto): Promise<ScanResponse> {
     const mimeType = dto.mimeType ?? 'audio/wav';
     const audioBuffer = Buffer.from(dto.audioBase64, 'base64');
 
@@ -77,15 +79,25 @@ export class ScanService {
     // lands, and surfaces a clear 502 in the meantime rather than a wrong result.
     const prediction = await this.callAiService('/identify_by_audio', audioBuffer, mimeType);
 
-    const scanId = await this.persistScanResult(userId, prediction, 'audio');
+    const scanId = userId
+      ? await this.persistScanResult(userId, prediction, 'audio')
+      : this.anonymousScanId();
     return this.toScanResponse(scanId, prediction);
   }
 
-  public async scanText(userId: string, dto: ScanTextDto): Promise<ScanResponse> {
+  public async scanText(userId: string | undefined, dto: ScanTextDto): Promise<ScanResponse> {
     const prediction = await this.callTextRecognition(dto.text);
 
-    const scanId = await this.persistScanResult(userId, prediction, 'text');
+    const scanId = userId
+      ? await this.persistScanResult(userId, prediction, 'text')
+      : this.anonymousScanId();
     return this.toScanResponse(scanId, prediction);
+  }
+
+  // Un invité n'a pas d'historique en base — l'app mobile n'utilise ce scanId
+  // que pour naviguer vers l'écran de résultat, jamais pour le relire ensuite.
+  private anonymousScanId(): string {
+    return `anon-${Date.now()}`;
   }
 
   public async getResult(userId: string, scanId: string): Promise<ScanResponse> {

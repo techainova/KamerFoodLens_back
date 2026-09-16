@@ -268,7 +268,11 @@ export class AdminService {
           : { id: target };
 
     const users = await this.prisma.user.findMany({ where, select: { id: true } });
-    const tokens = users.map((user) => user.id);
+    const deviceTokens = await this.prisma.deviceToken.findMany({
+      where: { userId: { in: users.map((user) => user.id) } },
+      select: { token: true },
+    });
+    const tokens = deviceTokens.map((deviceToken) => deviceToken.token);
 
     await this.pushQueue.add('send', { target, title, body, tokens });
     return { queued: true };
@@ -335,11 +339,15 @@ export class AdminService {
     const winnerUserIds = winnerTickets.map((ticket) => ticket.userId);
 
     await this.prisma.tombola.update({ where: { id: tombola.id }, data: { isActive: false } });
+    const winnerDeviceTokens = await this.prisma.deviceToken.findMany({
+      where: { userId: { in: winnerUserIds } },
+      select: { token: true },
+    });
     await this.pushQueue.add('send', {
       target: 'tombola_winners',
       title: 'Félicitations !',
       body: `Vous avez gagné à la tombola "${tombola.title}" !`,
-      tokens: winnerUserIds,
+      tokens: winnerDeviceTokens.map((deviceToken) => deviceToken.token),
     });
 
     return { tombolaId: tombola.id, winners: winnerUserIds };

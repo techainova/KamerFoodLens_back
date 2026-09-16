@@ -1,6 +1,5 @@
 import { Process, Processor } from '@nestjs/bull';
 import { Logger } from '@nestjs/common';
-import { ConfigService } from '@nestjs/config';
 import { Job } from 'bull';
 
 export interface PushJobData {
@@ -10,47 +9,65 @@ export interface PushJobData {
   tokens: string[];
 }
 
+interface ExpoPushTicket {
+  status: 'ok' | 'error';
+  message?: string;
+  details?: { error?: string };
+}
+
+const EXPO_PUSH_API_URL = 'https://exp.host/--/api/v2/push/send';
+const EXPO_PUSH_BATCH_SIZE = 100;
+
+function isExpoPushToken(token: string): boolean {
+  return token.startsWith('ExponentPushToken[') || token.startsWith('ExpoPushToken[');
+}
+
 @Processor('push')
 export class PushProcessor {
   private readonly logger = new Logger(PushProcessor.name);
 
-  public constructor(private readonly configService: ConfigService) {}
-
   @Process('send')
   public async handleSendPush(job: Job<PushJobData>): Promise<{ sent: number }> {
     const { target, title, body, tokens } = job.data;
-    const fcmServerKey = this.configService.get<string>('FCM_SERVER_KEY');
 
-    if (!fcmServerKey) {
-      this.logger.warn('FCM_SERVER_KEY not configured — skipping push send');
-      return { sent: 0 };
+    const validTokens = tokens.filter(isExpoPushToken);
+    if (validTokens.length < tokens.length) {
+      this.logger.warn(`Dropped ${tokens.length - validTokens.length} non-Expo-push-token value(s) for target="${target}"`);
     }
 
-    this.logger.log(`Sending push notification to target="${target}" (${tokens.length} tokens): ${title}`);
+    this.logger.log(`Sending push notification to target="${target}" (${validTokens.length} device(s)): ${title}`);
 
     let sent = 0;
-    for (const token of tokens) {
+    for (let i = 0; i < validTokens.length; i += EXPO_PUSH_BATCH_SIZE) {
+      const batch = validTokens.slice(i, i + EXPO_PUSH_BATCH_SIZE);
+
       try {
-        const response = await fetch('https://fcm.googleapis.com/fcm/send', {
+        const response = await fetch(EXPO_PUSH_API_URL, {
           method: 'POST',
           headers: {
-            Authorization: `key=${fcmServerKey}`,
+            Accept: 'application/json',
+            'Accept-Encoding': 'gzip, deflate',
             'Content-Type': 'application/json',
           },
-          body: JSON.stringify({
-            to: token,
-            notification: { title, body },
-          }),
+          body: JSON.stringify(batch.map((token) => ({ to: token, title, body, sound: 'default' }))),
         });
 
-        if (response.ok) {
-          sent += 1;
-        } else {
-          this.logger.error(`FCM push failed for token ${token}: ${response.statusText}`);
+        if (!response.ok) {
+          this.logger.error(`Expo push batch failed: ${response.status} ${response.statusText}`);
+          continue;
+        }
+
+        const payload = (await response.json()) as { data?: ExpoPushTicket[] };
+        for (const ticket of payload.data ?? []) {
+          if (ticket.status === 'ok') {
+            sent += 1;
+          } else {
+            this.logger.error(`Expo push ticket error: ${ticket.message ?? ticket.details?.error ?? 'unknown'}`);
+          }
         }
       } catch (error) {
         this.logger.error(
-          `FCM push error for token ${token}`,
+          'Expo push batch request error',
           error instanceof Error ? error.stack : undefined,
         );
       }

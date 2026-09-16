@@ -1,13 +1,18 @@
-import { ForbiddenException, Injectable, NotFoundException } from '@nestjs/common';
+import { BadRequestException, ForbiddenException, Injectable, NotFoundException } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
 import { ForumReply, ForumThread, User } from '@prisma/client';
 import { Model } from 'mongoose';
 import { PrismaService } from '../../prisma/prisma.service';
 import { S3UploadService } from '../../common/services/s3-upload.service';
+import { CommunityGateway } from './community.gateway';
 import { Post, PostComment, PostDocument } from './schemas/post.schema';
 import { Story, StoryDocument } from './schemas/story.schema';
-import { CreatePostDto, CreateCommentDto } from './dto/create-post.dto';
+import { StoryHighlight, StoryHighlightDocument } from './schemas/story-highlight.schema';
+import { CreatePostDto, CreateCommentDto, PostType } from './dto/create-post.dto';
 import { CreateThreadDto, CreateReplyDto } from './dto/create-thread.dto';
+import { CreateStoryStickersDto } from './dto/create-story-sticker.dto';
+import { CreateStoryDto } from './dto/create-story.dto';
+import { CreateHighlightDto } from './dto/highlight.dto';
 
 interface PaginatedResult<T> {
   items: T[];
@@ -38,11 +43,101 @@ export interface PostView extends AuthorInfo {
   createdAt: string;
 }
 
+export interface StoryPollOptionView {
+  label: string;
+  votes: number;
+}
+
+export interface StoryPollView {
+  question: string;
+  options: StoryPollOptionView[];
+  totalVotes: number;
+  myVoteIndex?: number;
+  x?: number;
+  y?: number;
+}
+
+export interface StoryQuizOptionView {
+  label: string;
+}
+
+export interface StoryQuizView {
+  question: string;
+  options: StoryQuizOptionView[];
+  totalAnswers: number;
+  correctCount: number;
+  myAnswerIndex?: number;
+  // Only present once the current user has answered — avoids spoiling the quiz.
+  correctIndex?: number;
+  x?: number;
+  y?: number;
+}
+
+export interface StorySliderView {
+  question: string;
+  emoji: string;
+  votesCount: number;
+  average?: number;
+  myValue?: number;
+  x?: number;
+  y?: number;
+}
+
+export interface StoryViewerView {
+  userId: string;
+  name: string;
+  viewedAt: string;
+}
+
+export interface StoryReplyView {
+  userId: string;
+  name: string;
+  text: string;
+  createdAt: string;
+}
+
+export interface StoryHighlightSummaryView {
+  id: string;
+  title: string;
+  coverImageUrl?: string;
+  storiesCount: number;
+}
+
+export interface StoryTextOverlayView {
+  text: string;
+  x: number;
+  y: number;
+  fontSize: number;
+  color: string;
+  fontWeight: string;
+  align: string;
+  backgroundColor?: string;
+}
+
 export interface StoryView extends AuthorInfo {
   id: string;
-  imageUrl: string;
+  mediaType: 'image' | 'text';
+  imageUrl?: string;
+  filter?: string;
+  backgroundColor?: string;
+  gradient?: string[];
+  textOverlays: StoryTextOverlayView[];
   caption?: string;
   createdAt: string;
+  reactionsCount: number;
+  myReactionEmoji?: string;
+  repliesCount: number;
+  viewsCount: number;
+  poll?: StoryPollView;
+  quiz?: StoryQuizView;
+  slider?: StorySliderView;
+}
+
+export interface StoryHighlightDetailView {
+  id: string;
+  title: string;
+  coverImageUrl?: string;
+  stories: StoryView[];
 }
 
 export interface ForumThreadView extends AuthorInfo {
@@ -77,8 +172,10 @@ export class CommunityService {
   public constructor(
     private readonly prisma: PrismaService,
     private readonly s3UploadService: S3UploadService,
+    private readonly communityGateway: CommunityGateway,
     @InjectModel(Post.name) private readonly postModel: Model<PostDocument>,
     @InjectModel(Story.name) private readonly storyModel: Model<StoryDocument>,
+    @InjectModel(StoryHighlight.name) private readonly highlightModel: Model<StoryHighlightDocument>,
   ) {}
 
   public async getPosts(page: number): Promise<PaginatedResult<PostView>> {
@@ -94,6 +191,11 @@ export class CommunityService {
   }
 
   public async createPost(userId: string, dto: CreatePostDto): Promise<PostView> {
+    const usersById = await this.loadAuthors([userId]);
+    if (dto.type === PostType.event && usersById.get(userId)?.role !== 'pro') {
+      throw new ForbiddenException('Only Pro accounts can publish an event post');
+    }
+
     const imageUrl = dto.imageBase64
       ? await this.s3UploadService.uploadBase64Image(dto.imageBase64, dto.mimeType ?? 'image/jpeg', 'community')
       : undefined;
@@ -107,8 +209,9 @@ export class CommunityService {
       comments: [],
     });
 
-    const usersById = await this.loadAuthors([userId]);
-    return this.toPostView(doc, usersById);
+    const post = this.toPostView(doc, usersById);
+    this.communityGateway.broadcastNewPost(post);
+    return post;
   }
 
   public async likePost(userId: string, postId: string): Promise<PostView> {
@@ -239,7 +342,7 @@ export class CommunityService {
     return this.toForumReplyView(updated);
   }
 
-  public async getStories(page: number): Promise<PaginatedResult<StoryView>> {
+  public async getStories(page: number, viewerId: string): Promise<PaginatedResult<StoryView>> {
     const skip = (page - 1) * PAGE_SIZE;
 
     const [docs, total] = await Promise.all([
@@ -253,26 +356,72 @@ export class CommunityService {
     ]);
 
     const usersById = await this.loadAuthors(docs.map((doc) => doc.userId));
-    return { items: docs.map((doc) => this.toStoryView(doc, usersById)), total, page };
+    return { items: docs.map((doc) => this.toStoryView(doc, usersById, viewerId)), total, page };
   }
 
-  public async createStory(
-    userId: string,
-    imageBase64: string,
-    mimeType: string | undefined,
-    caption: string | undefined,
-  ): Promise<StoryView> {
-    const imageUrl = await this.s3UploadService.uploadBase64Image(imageBase64, mimeType ?? 'image/jpeg', 'stories');
+  public async createStory(userId: string, dto: CreateStoryDto): Promise<StoryView> {
+    const stickers = dto.stickers;
+    const setCount = [stickers?.poll, stickers?.quiz, stickers?.slider].filter(Boolean).length;
+    if (setCount > 1) {
+      throw new BadRequestException('Only one of poll, quiz, or slider can be attached to a story');
+    }
+
+    const mediaType = dto.mediaType ?? 'image';
+    if (mediaType === 'image' && !dto.imageBase64) {
+      throw new BadRequestException('imageBase64 is required for image stories');
+    }
+    if (mediaType === 'text' && !dto.backgroundColor && !dto.gradient?.length) {
+      throw new BadRequestException('backgroundColor or gradient is required for text stories');
+    }
+
+    const imageUrl = dto.imageBase64
+      ? await this.s3UploadService.uploadBase64Image(dto.imageBase64, dto.mimeType ?? 'image/jpeg', 'stories')
+      : undefined;
 
     const doc = await this.storyModel.create({
       userId,
+      mediaType,
       imageUrl,
-      caption,
+      filter: dto.filter,
+      backgroundColor: dto.backgroundColor,
+      gradient: dto.gradient,
+      textOverlays: dto.textOverlays ?? [],
+      caption: dto.caption,
       expiresAt: new Date(Date.now() + STORY_TTL_MS),
+      poll: stickers?.poll
+        ? {
+            question: stickers.poll.question,
+            options: stickers.poll.options.map((label) => ({ label, voterIds: [] })),
+            x: stickers.poll.x,
+            y: stickers.poll.y,
+          }
+        : undefined,
+      quiz: stickers?.quiz
+        ? {
+            question: stickers.quiz.question,
+            options: stickers.quiz.options.map((label) => ({ label, pickedByIds: [] })),
+            correctIndex: stickers.quiz.correctIndex,
+            x: stickers.quiz.x,
+            y: stickers.quiz.y,
+          }
+        : undefined,
+      slider: stickers?.slider
+        ? {
+            question: stickers.slider.question,
+            emoji: stickers.slider.emoji,
+            votes: [],
+            x: stickers.slider.x,
+            y: stickers.slider.y,
+          }
+        : undefined,
     });
 
     const usersById = await this.loadAuthors([userId]);
-    return this.toStoryView(doc, usersById);
+    const story = this.toStoryView(doc, usersById, userId);
+    // Diffusion instantanée à tous les comptes connectés — sans ça, une story
+    // créée sur un appareil n'apparaît ailleurs qu'au prochain fetch manuel.
+    this.communityGateway.broadcastNewStory(story);
+    return story;
   }
 
   public async removeStory(userId: string, storyId: string): Promise<{ message: string }> {
@@ -283,6 +432,226 @@ export class CommunityService {
 
     await this.storyModel.findByIdAndDelete(storyId).exec();
     return { message: 'Story removed' };
+  }
+
+  public async markStoryViewed(userId: string, storyId: string): Promise<{ message: string }> {
+    const story = await this.storyModel.findById(storyId).exec();
+    if (!story) {
+      throw new NotFoundException('Story not found');
+    }
+    if (story.userId !== userId && !story.views.some((v) => v.userId === userId)) {
+      story.views.push({ userId, viewedAt: new Date() });
+      await story.save();
+    }
+    return { message: 'Marked as viewed' };
+  }
+
+  public async reactToStory(userId: string, storyId: string, emoji: string): Promise<StoryView> {
+    const story = await this.storyModel.findById(storyId).exec();
+    if (!story) {
+      throw new NotFoundException('Story not found');
+    }
+    story.reactions.push({ userId, emoji, createdAt: new Date() });
+    await story.save();
+
+    const usersById = await this.loadAuthors([story.userId]);
+    return this.toStoryView(story, usersById, userId);
+  }
+
+  public async replyToStory(userId: string, storyId: string, text: string): Promise<{ message: string }> {
+    const story = await this.storyModel.findById(storyId).exec();
+    if (!story) {
+      throw new NotFoundException('Story not found');
+    }
+    story.replies.push({ userId, text, createdAt: new Date() });
+    await story.save();
+    return { message: 'Reply sent' };
+  }
+
+  public async voteStoryPoll(userId: string, storyId: string, optionIndex: number): Promise<StoryView> {
+    const story = await this.storyModel.findById(storyId).exec();
+    if (!story?.poll) {
+      throw new NotFoundException('Poll not found on this story');
+    }
+    if (optionIndex < 0 || optionIndex >= story.poll.options.length) {
+      throw new BadRequestException('Invalid poll option');
+    }
+
+    for (const option of story.poll.options) {
+      option.voterIds = option.voterIds.filter((id) => id !== userId);
+    }
+    story.poll.options[optionIndex].voterIds.push(userId);
+    await story.save();
+
+    const usersById = await this.loadAuthors([story.userId]);
+    return this.toStoryView(story, usersById, userId);
+  }
+
+  public async answerStoryQuiz(userId: string, storyId: string, optionIndex: number): Promise<StoryView> {
+    const story = await this.storyModel.findById(storyId).exec();
+    if (!story?.quiz) {
+      throw new NotFoundException('Quiz not found on this story');
+    }
+    if (optionIndex < 0 || optionIndex >= story.quiz.options.length) {
+      throw new BadRequestException('Invalid quiz option');
+    }
+
+    const alreadyAnswered = story.quiz.options.some((o) => o.pickedByIds.includes(userId));
+    if (!alreadyAnswered) {
+      story.quiz.options[optionIndex].pickedByIds.push(userId);
+      await story.save();
+    }
+
+    const usersById = await this.loadAuthors([story.userId]);
+    return this.toStoryView(story, usersById, userId);
+  }
+
+  public async rateStorySlider(userId: string, storyId: string, value: number): Promise<StoryView> {
+    const story = await this.storyModel.findById(storyId).exec();
+    if (!story?.slider) {
+      throw new NotFoundException('Slider not found on this story');
+    }
+
+    story.slider.votes = story.slider.votes.filter((v) => v.userId !== userId);
+    story.slider.votes.push({ userId, value });
+    await story.save();
+
+    const usersById = await this.loadAuthors([story.userId]);
+    return this.toStoryView(story, usersById, userId);
+  }
+
+  public async getStoryViewers(userId: string, storyId: string): Promise<StoryViewerView[]> {
+    const story = await this.storyModel.findById(storyId).exec();
+    if (!story || story.userId !== userId) {
+      throw new ForbiddenException('You can only see viewers of your own stories');
+    }
+
+    const usersById = await this.loadAuthors(story.views.map((v) => v.userId));
+    return [...story.views]
+      .sort((a, b) => b.viewedAt.getTime() - a.viewedAt.getTime())
+      .map((v) => ({
+        userId: v.userId,
+        name: this.authorInfo(v.userId, usersById).authorName,
+        viewedAt: v.viewedAt.toISOString(),
+      }));
+  }
+
+  public async getStoryReplies(userId: string, storyId: string): Promise<StoryReplyView[]> {
+    const story = await this.storyModel.findById(storyId).exec();
+    if (!story || story.userId !== userId) {
+      throw new ForbiddenException('You can only read replies on your own stories');
+    }
+
+    const usersById = await this.loadAuthors(story.replies.map((r) => r.userId));
+    return [...story.replies]
+      .sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime())
+      .map((r) => ({
+        userId: r.userId,
+        name: this.authorInfo(r.userId, usersById).authorName,
+        text: r.text,
+        createdAt: r.createdAt.toISOString(),
+      }));
+  }
+
+  public async createHighlight(userId: string, dto: CreateHighlightDto): Promise<StoryHighlightSummaryView> {
+    const story = await this.storyModel.findById(dto.storyId).exec();
+    if (!story || story.userId !== userId) {
+      throw new ForbiddenException('You can only save your own stories to a highlight');
+    }
+
+    this.archiveStory(story);
+    await story.save();
+
+    const highlight = await this.highlightModel.create({
+      userId,
+      title: dto.title,
+      coverImageUrl: dto.coverImageUrl ?? story.imageUrl,
+      storyIds: [String(story._id)],
+    });
+
+    return this.toHighlightSummaryView(highlight);
+  }
+
+  public async addStoryToHighlight(userId: string, highlightId: string, storyId: string): Promise<StoryHighlightSummaryView> {
+    const highlight = await this.highlightModel.findById(highlightId).exec();
+    if (!highlight || highlight.userId !== userId) {
+      throw new ForbiddenException('You can only edit your own highlights');
+    }
+    const story = await this.storyModel.findById(storyId).exec();
+    if (!story || story.userId !== userId) {
+      throw new ForbiddenException('You can only save your own stories to a highlight');
+    }
+
+    this.archiveStory(story);
+    await story.save();
+
+    if (!highlight.storyIds.includes(storyId)) {
+      highlight.storyIds.push(storyId);
+      await highlight.save();
+    }
+
+    return this.toHighlightSummaryView(highlight);
+  }
+
+  public async removeStoryFromHighlight(userId: string, highlightId: string, storyId: string): Promise<StoryHighlightSummaryView> {
+    const highlight = await this.highlightModel.findById(highlightId).exec();
+    if (!highlight || highlight.userId !== userId) {
+      throw new ForbiddenException('You can only edit your own highlights');
+    }
+    highlight.storyIds = highlight.storyIds.filter((id) => id !== storyId);
+    await highlight.save();
+    return this.toHighlightSummaryView(highlight);
+  }
+
+  public async getUserHighlights(userId: string): Promise<StoryHighlightSummaryView[]> {
+    const highlights = await this.highlightModel.find({ userId }).sort({ createdAt: -1 }).exec();
+    return highlights.map((h) => this.toHighlightSummaryView(h));
+  }
+
+  public async getHighlightDetail(highlightId: string, viewerId: string): Promise<StoryHighlightDetailView> {
+    const highlight = await this.highlightModel.findById(highlightId).exec();
+    if (!highlight) {
+      throw new NotFoundException('Highlight not found');
+    }
+
+    const stories = await this.storyModel.find({ _id: { $in: highlight.storyIds } }).exec();
+    const usersById = await this.loadAuthors(stories.map((s) => s.userId));
+    const byId = new Map(stories.map((s) => [String(s._id), s]));
+    const ordered: StoryDocument[] = [];
+    for (const id of highlight.storyIds) {
+      const doc = byId.get(id);
+      if (doc) ordered.push(doc);
+    }
+
+    return {
+      id: String(highlight._id),
+      title: highlight.title,
+      coverImageUrl: highlight.coverImageUrl,
+      stories: ordered.map((doc) => this.toStoryView(doc, usersById, viewerId)),
+    };
+  }
+
+  public async deleteHighlight(userId: string, highlightId: string): Promise<{ message: string }> {
+    const highlight = await this.highlightModel.findById(highlightId).exec();
+    if (!highlight || highlight.userId !== userId) {
+      throw new ForbiddenException('You can only delete your own highlights');
+    }
+    await this.highlightModel.findByIdAndDelete(highlightId).exec();
+    return { message: 'Highlight removed' };
+  }
+
+  private archiveStory(story: StoryDocument): void {
+    story.isArchived = true;
+    story.expiresAt = undefined;
+  }
+
+  private toHighlightSummaryView(highlight: StoryHighlightDocument): StoryHighlightSummaryView {
+    return {
+      id: String(highlight._id),
+      title: highlight.title,
+      coverImageUrl: highlight.coverImageUrl,
+      storiesCount: highlight.storyIds.length,
+    };
   }
 
   private async loadAuthors(userIds: string[]): Promise<Map<string, User>> {
@@ -335,13 +704,80 @@ export class CommunityService {
     };
   }
 
-  private toStoryView(doc: StoryDocument, usersById: Map<string, User>): StoryView {
+  private toStoryView(doc: StoryDocument, usersById: Map<string, User>, viewerId: string): StoryView {
+    const myReaction = [...doc.reactions].reverse().find((r) => r.userId === viewerId);
+
     return {
       id: String(doc._id),
       ...this.authorInfo(doc.userId, usersById),
+      mediaType: doc.mediaType,
       imageUrl: doc.imageUrl,
+      filter: doc.filter,
+      backgroundColor: doc.backgroundColor,
+      gradient: doc.gradient,
+      textOverlays: doc.textOverlays.map((overlay) => ({
+        text: overlay.text,
+        x: overlay.x,
+        y: overlay.y,
+        fontSize: overlay.fontSize,
+        color: overlay.color,
+        fontWeight: overlay.fontWeight,
+        align: overlay.align,
+        backgroundColor: overlay.backgroundColor,
+      })),
       caption: doc.caption,
       createdAt: (doc as unknown as { createdAt: Date }).createdAt.toISOString(),
+      reactionsCount: doc.reactions.length,
+      myReactionEmoji: myReaction?.emoji,
+      repliesCount: doc.replies.length,
+      viewsCount: doc.views.length,
+      poll: doc.poll ? this.toStoryPollView(doc.poll, viewerId) : undefined,
+      quiz: doc.quiz ? this.toStoryQuizView(doc.quiz, viewerId) : undefined,
+      slider: doc.slider ? this.toStorySliderView(doc.slider, viewerId) : undefined,
+    };
+  }
+
+  private toStoryPollView(poll: NonNullable<StoryDocument['poll']>, viewerId: string): StoryPollView {
+    const options = poll.options.map((o) => ({ label: o.label, votes: o.voterIds.length }));
+    const myVoteIndex = poll.options.findIndex((o) => o.voterIds.includes(viewerId));
+    return {
+      question: poll.question,
+      options,
+      totalVotes: options.reduce((sum, o) => sum + o.votes, 0),
+      myVoteIndex: myVoteIndex >= 0 ? myVoteIndex : undefined,
+      x: poll.x,
+      y: poll.y,
+    };
+  }
+
+  private toStoryQuizView(quiz: NonNullable<StoryDocument['quiz']>, viewerId: string): StoryQuizView {
+    const myAnswerIndex = quiz.options.findIndex((o) => o.pickedByIds.includes(viewerId));
+    const hasAnswered = myAnswerIndex >= 0;
+    return {
+      question: quiz.question,
+      options: quiz.options.map((o) => ({ label: o.label })),
+      totalAnswers: quiz.options.reduce((sum, o) => sum + o.pickedByIds.length, 0),
+      correctCount: quiz.options[quiz.correctIndex]?.pickedByIds.length ?? 0,
+      myAnswerIndex: hasAnswered ? myAnswerIndex : undefined,
+      correctIndex: hasAnswered ? quiz.correctIndex : undefined,
+      x: quiz.x,
+      y: quiz.y,
+    };
+  }
+
+  private toStorySliderView(slider: NonNullable<StoryDocument['slider']>, viewerId: string): StorySliderView {
+    const myVote = slider.votes.find((v) => v.userId === viewerId);
+    const average = slider.votes.length > 0
+      ? slider.votes.reduce((sum, v) => sum + v.value, 0) / slider.votes.length
+      : undefined;
+    return {
+      question: slider.question,
+      emoji: slider.emoji,
+      votesCount: slider.votes.length,
+      average,
+      myValue: myVote?.value,
+      x: slider.x,
+      y: slider.y,
     };
   }
 

@@ -13,6 +13,7 @@ import { CreateThreadDto, CreateReplyDto } from './dto/create-thread.dto';
 import { CreateStoryStickersDto } from './dto/create-story-sticker.dto';
 import { CreateStoryDto } from './dto/create-story.dto';
 import { CreateHighlightDto } from './dto/highlight.dto';
+import { NotificationsService } from '../notifications/notifications.service';
 
 interface PaginatedResult<T> {
   items: T[];
@@ -33,10 +34,17 @@ export interface PostCommentView extends AuthorInfo {
   createdAt: string;
 }
 
+export interface PostMediaView {
+  url: string;
+  type: 'image' | 'video';
+}
+
 export interface PostView extends AuthorInfo {
   id: string;
   content: string;
+  /** @deprecated use `media` — kept for API consumers built before the carousel feature. */
   imageUrl?: string;
+  media: PostMediaView[];
   type: string;
   likes: string[];
   comments: PostCommentView[];
@@ -173,17 +181,19 @@ export class CommunityService {
     private readonly prisma: PrismaService,
     private readonly s3UploadService: S3UploadService,
     private readonly communityGateway: CommunityGateway,
+    private readonly notificationsService: NotificationsService,
     @InjectModel(Post.name) private readonly postModel: Model<PostDocument>,
     @InjectModel(Story.name) private readonly storyModel: Model<StoryDocument>,
     @InjectModel(StoryHighlight.name) private readonly highlightModel: Model<StoryHighlightDocument>,
   ) {}
 
-  public async getPosts(page: number): Promise<PaginatedResult<PostView>> {
+  public async getPosts(page: number, authorId?: string): Promise<PaginatedResult<PostView>> {
     const skip = (page - 1) * PAGE_SIZE;
+    const filter = authorId ? { userId: authorId } : {};
 
     const [docs, total] = await Promise.all([
-      this.postModel.find().sort({ createdAt: -1 }).skip(skip).limit(PAGE_SIZE).exec(),
-      this.postModel.countDocuments().exec(),
+      this.postModel.find(filter).sort({ createdAt: -1 }).skip(skip).limit(PAGE_SIZE).exec(),
+      this.postModel.countDocuments(filter).exec(),
     ]);
 
     const usersById = await this.loadAuthors(docs.map((doc) => doc.userId));
@@ -196,14 +206,19 @@ export class CommunityService {
       throw new ForbiddenException('Only Pro accounts can publish an event post');
     }
 
-    const imageUrl = dto.imageBase64
-      ? await this.s3UploadService.uploadBase64Image(dto.imageBase64, dto.mimeType ?? 'image/jpeg', 'community')
-      : undefined;
+    const media = dto.media
+      ? await Promise.all(
+          dto.media.map(async (item) => ({
+            url: await this.s3UploadService.uploadBase64Image(item.base64, item.mimeType, 'community'),
+            type: item.mimeType.startsWith('video/') ? 'video' : 'image',
+          })),
+        )
+      : [];
 
     const doc = await this.postModel.create({
       userId,
       content: dto.content,
-      imageUrl,
+      media,
       type: dto.type,
       likes: [],
       comments: [],
@@ -220,13 +235,19 @@ export class CommunityService {
       throw new NotFoundException('Post not found');
     }
 
-    if (post.likes.includes(userId)) {
+    const wasLiked = post.likes.includes(userId);
+    if (wasLiked) {
       post.likes = post.likes.filter((id) => id !== userId);
     } else {
       post.likes.push(userId);
     }
 
     await post.save();
+
+    if (!wasLiked && post.userId !== userId) {
+      await this.notifyPostOwner(post.userId, userId, 'a aimé votre publication', postId);
+    }
+
     const usersById = await this.loadAuthors([post.userId]);
     return this.toPostView(post, usersById);
   }
@@ -240,8 +261,28 @@ export class CommunityService {
     post.comments.push({ userId, text: dto.text, createdAt: new Date() });
     await post.save();
 
+    if (post.userId !== userId) {
+      await this.notifyPostOwner(post.userId, userId, 'a commenté votre publication', postId);
+    }
+
     const usersById = await this.loadAuthors([post.userId, ...post.comments.map((c) => c.userId)]);
     return this.toPostView(post, usersById);
+  }
+
+  // Notification en base pour le propriétaire de la publication — la home
+  // feed (broadcast global via CommunityGateway) ne cible personne en
+  // particulier, donc sans ceci l'auteur n'apprend jamais qu'on a interagi
+  // avec son post s'il n'est pas connecté au moment de l'action.
+  private async notifyPostOwner(ownerId: string, actorId: string, action: string, postId: string): Promise<void> {
+    const actor = await this.prisma.user.findUnique({ where: { id: actorId } });
+    const actorName = actor ? `${actor.firstName} ${actor.lastName}`.trim() : 'Quelqu\'un';
+    await this.notificationsService.create(
+      ownerId,
+      'community',
+      'Nouvelle interaction',
+      `${actorName} ${action}.`,
+      { postId },
+    );
   }
 
   public async getForumThreads(page: number): Promise<PaginatedResult<ForumThreadView>> {
@@ -300,6 +341,18 @@ export class CommunityService {
       data: { threadId, userId, content: dto.content },
       include: { user: true },
     });
+
+    if (thread.userId !== userId) {
+      const author = await this.prisma.user.findUnique({ where: { id: userId } });
+      const authorName = author ? `${author.firstName} ${author.lastName}`.trim() : 'Quelqu\'un';
+      await this.notificationsService.create(
+        thread.userId,
+        'community',
+        'Nouvelle réponse',
+        `${authorName} a répondu à votre discussion "${thread.title}".`,
+        { threadId: thread.id },
+      );
+    }
 
     return this.toForumReplyView(reply);
   }
@@ -688,11 +741,20 @@ export class CommunityService {
   }
 
   private toPostView(doc: PostDocument, usersById: Map<string, User>): PostView {
+    // Posts created before the carousel feature only have `imageUrl` — surface
+    // that as a single-item `media` array so old and new posts render the same way.
+    const media: PostMediaView[] = doc.media?.length
+      ? doc.media.map((m) => ({ url: m.url, type: m.type as 'image' | 'video' }))
+      : doc.imageUrl
+        ? [{ url: doc.imageUrl, type: 'image' }]
+        : [];
+
     return {
       id: String(doc._id),
       ...this.authorInfo(doc.userId, usersById),
       content: doc.content,
-      imageUrl: doc.imageUrl,
+      imageUrl: media[0]?.url,
+      media,
       type: doc.type,
       likes: doc.likes,
       comments: doc.comments.map((comment: PostComment) => ({

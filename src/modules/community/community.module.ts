@@ -6,6 +6,7 @@ import { CommunityGateway } from './community.gateway';
 import { Post, PostSchema } from './schemas/post.schema';
 import { Story, StorySchema } from './schemas/story.schema';
 import { StoryHighlight, StoryHighlightSchema } from './schemas/story-highlight.schema';
+import { NotificationsModule } from '../notifications/notifications.module';
 
 @Module({
   imports: [
@@ -14,6 +15,7 @@ import { StoryHighlight, StoryHighlightSchema } from './schemas/story-highlight.
       { name: Story.name, schema: StorySchema },
       { name: StoryHighlight.name, schema: StoryHighlightSchema },
     ]),
+    NotificationsModule,
   ],
   controllers: [CommunityController],
   providers: [CommunityService, CommunityGateway],

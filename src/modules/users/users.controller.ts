@@ -1,6 +1,6 @@
 import { Body, Controller, Delete, Get, Param, Patch, Post, Query } from '@nestjs/common';
 import { ApiBearerAuth, ApiOperation, ApiResponse, ApiTags } from '@nestjs/swagger';
-import { Notification } from '@prisma/client';
+import { Notification, NotificationType } from '@prisma/client';
 import { CurrentUser, AuthenticatedUser } from '../../common/decorators/current-user.decorator';
 import { UpdateProfileDto } from './dto/update-profile.dto';
 import { UploadAvatarDto } from './dto/upload-avatar.dto';
@@ -11,8 +11,10 @@ import {
   BadgeWithStatus,
   EnrichedFavorite,
   JournalEntryView,
+  MyReviewView,
   PaginatedResult,
   UserProfile,
+  UserStats,
   UsersService,
 } from './users.service';
 
@@ -69,6 +71,20 @@ export class UsersController {
     return this.usersService.unregisterDeviceToken(user.id, token);
   }
 
+  @Get('me/stats')
+  @ApiOperation({ summary: 'Aggregate activity stats for the current user (scans, recipes, reviews, posts)' })
+  @ApiResponse({ status: 200, description: 'User stats' })
+  public async getMyStats(@CurrentUser() user: AuthenticatedUser): Promise<UserStats> {
+    return this.usersService.getMyStats(user.id);
+  }
+
+  @Get('me/reviews')
+  @ApiOperation({ summary: 'List the restaurant reviews written by the current user' })
+  @ApiResponse({ status: 200, description: 'Reviews' })
+  public async getMyReviews(@CurrentUser() user: AuthenticatedUser): Promise<MyReviewView[]> {
+    return this.usersService.getMyReviews(user.id);
+  }
+
   @Get('badges')
   @ApiOperation({ summary: 'List all badges with earned status for the current user' })
   @ApiResponse({ status: 200, description: 'Badges with isEarned flag' })
@@ -77,13 +93,14 @@ export class UsersController {
   }
 
   @Get('notifications')
-  @ApiOperation({ summary: 'Paginated list of notifications' })
+  @ApiOperation({ summary: 'Paginated list of notifications, optionally filtered by type' })
   @ApiResponse({ status: 200, description: 'Notifications page with unread count' })
   public async getNotifications(
     @CurrentUser() user: AuthenticatedUser,
     @Query('page') page?: string,
+    @Query('type') type?: NotificationType,
   ): Promise<PaginatedResult<Notification> & { unreadCount: number }> {
-    return this.usersService.getNotifications(user.id, page ? parseInt(page, 10) : 1);
+    return this.usersService.getNotifications(user.id, page ? parseInt(page, 10) : 1, type);
   }
 
   @Patch('notifications/read/:id')
@@ -103,6 +120,16 @@ export class UsersController {
     @CurrentUser() user: AuthenticatedUser,
   ): Promise<{ updated: number }> {
     return this.usersService.markAllNotificationsRead(user.id);
+  }
+
+  @Delete('notifications/:id')
+  @ApiOperation({ summary: 'Delete a notification' })
+  @ApiResponse({ status: 200, description: 'Notification deleted' })
+  public async deleteNotification(
+    @CurrentUser() user: AuthenticatedUser,
+    @Param('id') id: string,
+  ): Promise<{ message: string }> {
+    return this.usersService.deleteNotification(user.id, id);
   }
 
   @Get('favorites')

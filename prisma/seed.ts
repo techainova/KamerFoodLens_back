@@ -5,6 +5,7 @@ import * as crypto from 'crypto';
 const prisma = new PrismaClient();
 
 interface RecipeSeedData {
+  slug: string;
   name: string;
   nameEN: string;
   region: string;
@@ -18,6 +19,7 @@ interface RecipeSeedData {
 
 const RECIPE_SEED_DATA: RecipeSeedData[] = [
   {
+    slug: 'ekwang',
     name: 'Ekwang',
     nameEN: 'Ekwang',
     region: 'Sud-Ouest, Cameroun',
@@ -30,6 +32,7 @@ const RECIPE_SEED_DATA: RecipeSeedData[] = [
     accompagnements: ['aucun (plat complet)'],
   },
   {
+    slug: 'eru',
     name: 'Eru',
     nameEN: 'Eru',
     region: 'Sud-Ouest, Cameroun',
@@ -42,6 +45,7 @@ const RECIPE_SEED_DATA: RecipeSeedData[] = [
     accompagnements: ['fufu de manioc', 'garri', 'miondo'],
   },
   {
+    slug: 'jollof-ghana',
     name: 'Riz Jollof (Ghana)',
     nameEN: 'Ghanaian Jollof Rice',
     region: "Ghana, Afrique de l'Ouest",
@@ -54,6 +58,7 @@ const RECIPE_SEED_DATA: RecipeSeedData[] = [
     accompagnements: ['poulet grillé', 'salade', 'plantain frit'],
   },
   {
+    slug: 'ndole',
     name: 'Ndolé',
     nameEN: 'Ndole',
     region: 'Littoral, Cameroun',
@@ -65,6 +70,7 @@ const RECIPE_SEED_DATA: RecipeSeedData[] = [
     accompagnements: ['plantain', 'riz', 'miondo'],
   },
   {
+    slug: 'palm-nut-soup',
     name: 'Soupe de noix de palme',
     nameEN: 'Palm Nut Soup',
     region: "Afrique Centrale et de l'Ouest",
@@ -77,6 +83,7 @@ const RECIPE_SEED_DATA: RecipeSeedData[] = [
     accompagnements: ['fufu', 'riz', 'banku'],
   },
   {
+    slug: 'waakye',
     name: 'Waakye',
     nameEN: 'Waakye',
     region: "Ghana, Afrique de l'Ouest",
@@ -89,6 +96,7 @@ const RECIPE_SEED_DATA: RecipeSeedData[] = [
     accompagnements: ['garri', 'spaghetti', 'œuf bouilli', 'avocat'],
   },
   {
+    slug: 'poulet-dg',
     name: 'Poulet DG',
     nameEN: 'Chicken DG',
     region: 'Centre, Cameroun',
@@ -101,6 +109,7 @@ const RECIPE_SEED_DATA: RecipeSeedData[] = [
     accompagnements: ['riz blanc', 'plantain'],
   },
   {
+    slug: 'koki',
     name: 'Koki',
     nameEN: 'Koki Beans Cake',
     region: 'Ouest, Cameroun',
@@ -113,6 +122,7 @@ const RECIPE_SEED_DATA: RecipeSeedData[] = [
     accompagnements: ['miondo', 'riz'],
   },
   {
+    slug: 'miondo',
     name: 'Miondo',
     nameEN: 'Miondo',
     region: 'Littoral, Cameroun',
@@ -125,6 +135,7 @@ const RECIPE_SEED_DATA: RecipeSeedData[] = [
     accompagnements: ['ndolé', 'eru', 'poisson braisé'],
   },
   {
+    slug: 'braise',
     name: 'Poisson braisé',
     nameEN: 'Grilled Fish',
     region: 'Cameroun',
@@ -137,6 +148,7 @@ const RECIPE_SEED_DATA: RecipeSeedData[] = [
     accompagnements: ['plantain frit', 'miondo', 'salade'],
   },
   {
+    slug: 'mbongo',
     name: 'Mbongo Tchobi',
     nameEN: 'Black Pepper Stew',
     region: 'Littoral, Cameroun',
@@ -149,6 +161,7 @@ const RECIPE_SEED_DATA: RecipeSeedData[] = [
     accompagnements: ['miondo', 'plantain', 'riz'],
   },
   {
+    slug: 'okok',
     name: 'Okok au Pistache',
     nameEN: 'Okok with Groundnut',
     region: 'Centre, Cameroun',
@@ -181,6 +194,7 @@ async function seedRecipes(): Promise<void> {
   for (const dish of RECIPE_SEED_DATA) {
     await prisma.recipe.create({
       data: {
+        slug: dish.slug,
         name: dish.name,
         nameEN: dish.nameEN,
         region: dish.region,

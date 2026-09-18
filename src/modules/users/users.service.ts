@@ -1,10 +1,12 @@
 import { ForbiddenException, Injectable, NotFoundException } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
-import { Badge, FavoriteItem, FavoriteType, Notification, User } from '@prisma/client';
+import { Badge, FavoriteItem, FavoriteType, Notification, NotificationType, User } from '@prisma/client';
 import { Model } from 'mongoose';
 import { PrismaService } from '../../prisma/prisma.service';
 import { S3UploadService } from '../../common/services/s3-upload.service';
 import { JournalEntry, JournalEntryDocument } from './schemas/journal-entry.schema';
+import { ScanResult, ScanResultDocument } from '../scan/schemas/scan-result.schema';
+import { Post, PostDocument } from '../community/schemas/post.schema';
 import { UpdateProfileDto } from './dto/update-profile.dto';
 import { AddFavoriteDto } from './dto/add-favorite.dto';
 import { AddJournalDto } from './dto/add-journal.dto';
@@ -51,6 +53,22 @@ export type UserProfile = Omit<User, 'passwordHash' | 'googleId'> & {
   level: number;
 };
 
+export interface UserStats {
+  scansCount: number;
+  recipesCount: number;
+  reviewsCount: number;
+  postsCount: number;
+}
+
+export interface MyReviewView {
+  id: string;
+  restaurantId: string;
+  restaurantName: string;
+  rating: number;
+  comment: string | null;
+  createdAt: string;
+}
+
 const PAGE_SIZE = 20;
 
 @Injectable()
@@ -59,6 +77,8 @@ export class UsersService {
     private readonly prisma: PrismaService,
     private readonly s3UploadService: S3UploadService,
     @InjectModel(JournalEntry.name) private readonly journalModel: Model<JournalEntryDocument>,
+    @InjectModel(ScanResult.name) private readonly scanResultModel: Model<ScanResultDocument>,
+    @InjectModel(Post.name) private readonly postModel: Model<PostDocument>,
   ) {}
 
   public async getMe(userId: string): Promise<UserProfile> {
@@ -82,6 +102,32 @@ export class UsersService {
     );
     const user = await this.prisma.user.update({ where: { id: userId }, data: { avatar: avatarUrl } });
     return this.toUserProfile(user);
+  }
+
+  public async getMyStats(userId: string): Promise<UserStats> {
+    const [scansCount, recipesCount, reviewsCount, postsCount] = await Promise.all([
+      this.scanResultModel.countDocuments({ userId }).exec(),
+      this.prisma.favoriteItem.count({ where: { userId, type: 'recipe' } }),
+      this.prisma.review.count({ where: { userId } }),
+      this.postModel.countDocuments({ userId }).exec(),
+    ]);
+    return { scansCount, recipesCount, reviewsCount, postsCount };
+  }
+
+  public async getMyReviews(userId: string): Promise<MyReviewView[]> {
+    const reviews = await this.prisma.review.findMany({
+      where: { userId },
+      include: { restaurant: { select: { name: true } } },
+      orderBy: { createdAt: 'desc' },
+    });
+    return reviews.map((r) => ({
+      id: r.id,
+      restaurantId: r.restaurantId,
+      restaurantName: r.restaurant.name,
+      rating: r.rating,
+      comment: r.comment,
+      createdAt: r.createdAt.toISOString(),
+    }));
   }
 
   public async registerDeviceToken(userId: string, dto: RegisterDeviceTokenDto): Promise<{ message: string }> {
@@ -127,17 +173,19 @@ export class UsersService {
   public async getNotifications(
     userId: string,
     page: number,
+    type?: NotificationType,
   ): Promise<PaginatedResult<Notification> & { unreadCount: number }> {
     const skip = (page - 1) * PAGE_SIZE;
+    const where = type ? { userId, type } : { userId };
 
     const [items, total, unreadCount] = await Promise.all([
       this.prisma.notification.findMany({
-        where: { userId },
+        where,
         orderBy: { createdAt: 'desc' },
         skip,
         take: PAGE_SIZE,
       }),
-      this.prisma.notification.count({ where: { userId } }),
+      this.prisma.notification.count({ where }),
       this.prisma.notification.count({ where: { userId, isRead: false } }),
     ]);
 
@@ -161,6 +209,17 @@ export class UsersService {
     });
 
     return { updated: result.count };
+  }
+
+  public async deleteNotification(userId: string, notificationId: string): Promise<{ message: string }> {
+    const notification = await this.prisma.notification.findUnique({ where: { id: notificationId } });
+
+    if (!notification || notification.userId !== userId) {
+      throw new NotFoundException('Notification not found');
+    }
+
+    await this.prisma.notification.delete({ where: { id: notificationId } });
+    return { message: 'Notification deleted' };
   }
 
   public async getFavorites(userId: string): Promise<EnrichedFavorite[]> {

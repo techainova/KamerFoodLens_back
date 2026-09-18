@@ -81,16 +81,37 @@ export function renderOtpEmail(otp: string): string {
   `);
 }
 
-export function renderPasswordResetEmail(resetToken: string): string {
+export function renderPasswordResetEmail(resetCode: string, validityMinutes: number): string {
   return renderLayout(`
     <h1 style="margin:0 0 4px 0; font-size:20px; color:${INK}; text-align:center;">Réinitialisation du mot de passe</h1>
     <p style="margin:0 0 24px 0; font-size:14px; color:${INK_MUTE}; text-align:center; line-height:1.6;">
-      Voici votre code de réinitialisation KmerFoodLens.
+      Voici votre code de réinitialisation KmerFoodLens. Saisissez-le dans l'application pour choisir un nouveau mot de passe.
     </p>
-    ${otpCodeBlock(resetToken)}
+    ${otpCodeBlock(resetCode)}
     <p style="margin:0; font-size:13px; color:${INK_MUTE}; text-align:center; line-height:1.6;">
-      Ce code expire dans <strong style="color:${INK};">1 heure</strong>.<br />
+      Ce code expire dans <strong style="color:${INK};">${validityMinutes} minutes</strong>.<br />
       Si vous n'êtes pas à l'origine de cette demande, vous pouvez ignorer cet email — votre mot de passe restera inchangé.
+    </p>
+  `);
+}
+
+export function renderPasswordChangedEmail(): string {
+  return renderLayout(`
+    <h1 style="margin:0 0 4px 0; font-size:20px; color:${INK}; text-align:center;">Mot de passe modifié</h1>
+    <p style="margin:0 0 20px 0; font-size:14px; color:${INK_MUTE}; text-align:center; line-height:1.6;">
+      Le mot de passe de votre compte KmerFoodLens vient d'être changé.
+    </p>
+    <table role="presentation" cellpadding="0" cellspacing="0" width="100%" style="margin:0 0 20px 0;">
+      <tr>
+        <td style="background-color:${CREAM}; border-radius:12px; padding:16px 20px;">
+          <p style="margin:0; font-size:13px; color:${INK}; line-height:1.6;">
+            Par mesure de sécurité, toutes vos sessions actives ont été déconnectées — reconnectez-vous avec votre nouveau mot de passe.
+          </p>
+        </td>
+      </tr>
+    </table>
+    <p style="margin:0; font-size:13px; color:${INK_MUTE}; text-align:center; line-height:1.6;">
+      Si vous n'êtes pas à l'origine de ce changement, contactez immédiatement notre support.
     </p>
   `);
 }

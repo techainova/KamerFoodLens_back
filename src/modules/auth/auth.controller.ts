@@ -87,7 +87,7 @@ export class AuthController {
   @ApiOperation({ summary: 'Reset password using a reset token' })
   @ApiResponse({ status: 200, description: 'Password reset' })
   public async resetPassword(@Body() dto: ResetPasswordDto): Promise<{ message: string }> {
-    return this.authService.resetPassword(dto.token, dto.newPassword);
+    return this.authService.resetPassword(dto.email, dto.otp, dto.newPassword);
   }
 
   @ApiBearerAuth()

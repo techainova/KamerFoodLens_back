@@ -35,6 +35,15 @@ export class CoursesController {
     return this.coursesService.getMyCourses(user.id);
   }
 
+  @Roles('pro', 'admin')
+  @ApiBearerAuth()
+  @Get('managed')
+  @ApiOperation({ summary: 'List courses created by the current Pro account' })
+  @ApiResponse({ status: 200, description: 'Managed courses' })
+  public async getManaged(@CurrentUser() user: AuthenticatedUser): Promise<CourseView[]> {
+    return this.coursesService.getManagedByInstructor(user.id);
+  }
+
   @Public()
   @Get(':id')
   @ApiOperation({ summary: 'Get course details with lessons grouped by section' })

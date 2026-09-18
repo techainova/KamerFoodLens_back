@@ -1,5 +1,6 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
-import { IsEnum, IsOptional, IsString } from 'class-validator';
+import { Type } from 'class-transformer';
+import { ArrayMaxSize, IsArray, IsEnum, IsOptional, IsString, ValidateNested } from 'class-validator';
 
 export enum PostType {
   post = 'post',
@@ -12,20 +13,31 @@ export enum PostType {
   event = 'event',
 }
 
+export class CreatePostMediaDto {
+  @ApiProperty({ example: 'base64-encoded-image-or-video-bytes' })
+  @IsString()
+  public base64!: string;
+
+  @ApiProperty({ example: 'image/jpeg', description: 'image/* or video/* — determines the carousel item type' })
+  @IsString()
+  public mimeType!: string;
+}
+
 export class CreatePostDto {
   @ApiProperty({ example: 'Ma recette de Ndolé maison !' })
   @IsString()
   public content!: string;
 
-  @ApiPropertyOptional({ example: 'base64-encoded-image-bytes' })
+  @ApiPropertyOptional({
+    type: [CreatePostMediaDto],
+    description: 'Carousel of photos/videos, in display order (Instagram-style — 0 to 10 items).',
+  })
   @IsOptional()
-  @IsString()
-  public imageBase64?: string;
-
-  @ApiPropertyOptional({ example: 'image/jpeg' })
-  @IsOptional()
-  @IsString()
-  public mimeType?: string;
+  @IsArray()
+  @ArrayMaxSize(10)
+  @ValidateNested({ each: true })
+  @Type(() => CreatePostMediaDto)
+  public media?: CreatePostMediaDto[];
 
   @ApiProperty({ enum: PostType, example: PostType.recipe })
   @IsEnum(PostType)

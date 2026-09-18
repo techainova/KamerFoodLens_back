@@ -1,4 +1,4 @@
-import { ForbiddenException, NotFoundException, Injectable } from '@nestjs/common';
+import { ConflictException, ForbiddenException, NotFoundException, Injectable } from '@nestjs/common';
 import { MenuItem, Prisma, Restaurant, Review } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
 import { SearchRestaurantsDto } from './dto/search-restaurants.dto';
@@ -27,6 +27,10 @@ export interface RestaurantView {
   hoursLabel?: string;
   isVerified: boolean;
   ownerId: string;
+  followersCount: number;
+  isFollowing: boolean;
+  acceptsDelivery: boolean;
+  acceptsReservations: boolean;
 }
 
 export interface MenuItemView {
@@ -65,14 +69,14 @@ export class RestaurantsService {
     private readonly gamesService: GamesService,
   ) {}
 
-  public async search(dto: SearchRestaurantsDto): Promise<ListResult<RestaurantView>> {
+  public async search(dto: SearchRestaurantsDto, currentUserId?: string): Promise<ListResult<RestaurantView>> {
     const page = dto.page ?? 1;
     const skip = (page - 1) * PAGE_SIZE;
 
     if (dto.lat !== undefined && dto.lng !== undefined) {
       // radius is provided in meters by clients (map/geo convention); convert to km for the SQL distance calc.
       const radiusKm = (dto.radius ?? DEFAULT_RADIUS_KM * 1000) / 1000;
-      return this.searchByGeo(dto.lat, dto.lng, radiusKm, dto.cuisine, page, skip);
+      return this.searchByGeo(dto.lat, dto.lng, radiusKm, dto.cuisine, page, skip, currentUserId);
     }
 
     const where: Prisma.RestaurantWhereInput = dto.cuisine
@@ -84,16 +88,44 @@ export class RestaurantsService {
       this.prisma.restaurant.count({ where }),
     ]);
 
-    const data = await Promise.all(restaurants.map((restaurant) => this.toRestaurantView(restaurant)));
+    const data = await Promise.all(restaurants.map((restaurant) => this.toRestaurantView(restaurant, undefined, currentUserId)));
     return { data, meta: { page, total } };
   }
 
-  public async findById(id: string): Promise<RestaurantView> {
+  public async findById(id: string, currentUserId?: string): Promise<RestaurantView> {
     const restaurant = await this.prisma.restaurant.findUnique({ where: { id } });
     if (!restaurant) {
       throw new NotFoundException('Restaurant not found');
     }
-    return this.toRestaurantView(restaurant);
+    return this.toRestaurantView(restaurant, undefined, currentUserId);
+  }
+
+  public async follow(userId: string, restaurantId: string): Promise<{ followersCount: number; isFollowing: true }> {
+    await this.ensureExists(restaurantId);
+    const existing = await this.prisma.restaurantFollow.findUnique({
+      where: { userId_restaurantId: { userId, restaurantId } },
+    });
+    if (existing) {
+      throw new ConflictException('You already follow this restaurant');
+    }
+    await this.prisma.restaurantFollow.create({ data: { userId, restaurantId } });
+    const followersCount = await this.prisma.restaurantFollow.count({ where: { restaurantId } });
+    return { followersCount, isFollowing: true };
+  }
+
+  public async unfollow(userId: string, restaurantId: string): Promise<{ followersCount: number; isFollowing: false }> {
+    await this.prisma.restaurantFollow.deleteMany({ where: { userId, restaurantId } });
+    const followersCount = await this.prisma.restaurantFollow.count({ where: { restaurantId } });
+    return { followersCount, isFollowing: false };
+  }
+
+  public async getFollowedRestaurants(userId: string): Promise<RestaurantView[]> {
+    const follows = await this.prisma.restaurantFollow.findMany({
+      where: { userId },
+      include: { restaurant: true },
+      orderBy: { createdAt: 'desc' },
+    });
+    return Promise.all(follows.map((f) => this.toRestaurantView(f.restaurant, undefined, userId)));
   }
 
   public async getMenu(restaurantId: string): Promise<MenuItemView[]> {
@@ -106,14 +138,32 @@ export class RestaurantsService {
   }
 
   public async createReview(userId: string, restaurantId: string, dto: CreateReviewDto): Promise<Review> {
-    await this.ensureExists(restaurantId);
+    const restaurant = await this.prisma.restaurant.findUnique({ where: { id: restaurantId } });
+    if (!restaurant) {
+      throw new NotFoundException('Restaurant not found');
+    }
     const review = await this.prisma.review.create({
       data: { userId, restaurantId, rating: dto.rating, comment: dto.comment },
     });
 
     await this.gamesService.awardReviewXp(userId);
+    await this.notifyOwnerOfReview(restaurant.ownerId, userId, restaurant.name, dto.rating);
 
     return review;
+  }
+
+  // Alimente l'inbox système -> pro (GET /pro/messages).
+  private async notifyOwnerOfReview(ownerId: string, reviewerId: string, restaurantName: string, rating: number): Promise<void> {
+    const reviewer = await this.prisma.user.findUnique({ where: { id: reviewerId } });
+    const reviewerName = reviewer ? `${reviewer.firstName} ${reviewer.lastName}`.trim() : 'Un client';
+    await this.prisma.proMessage.create({
+      data: {
+        recipientId: ownerId,
+        senderName: reviewerName,
+        subject: `Nouvel avis ${rating}★`,
+        body: `${reviewerName} a laissé un avis ${rating}★ sur ${restaurantName}.`,
+      },
+    });
   }
 
   public async getReviews(restaurantId: string, page: number): Promise<ListResult<RestaurantReviewView>> {
@@ -213,6 +263,7 @@ export class RestaurantsService {
     cuisine: string | undefined,
     page: number,
     skip: number,
+    currentUserId?: string,
   ): Promise<ListResult<RestaurantView>> {
     const rows = await this.prisma.$queryRaw<Array<Restaurant & { distancekm: number }>>`
       SELECT * FROM (
@@ -234,19 +285,25 @@ export class RestaurantsService {
     const data = await Promise.all(
       rows.map(async (row) => {
         const { distancekm, ...restaurant } = row;
-        return this.toRestaurantView(restaurant, distancekm);
+        return this.toRestaurantView(restaurant, distancekm, currentUserId);
       }),
     );
 
     return { data, meta: { page, total: data.length } };
   }
 
-  private async toRestaurantView(restaurant: Restaurant, distanceKm?: number): Promise<RestaurantView> {
-    const aggregate = await this.prisma.review.aggregate({
-      where: { restaurantId: restaurant.id },
-      _avg: { rating: true },
-      _count: { rating: true },
-    });
+  private async toRestaurantView(restaurant: Restaurant, distanceKm?: number, currentUserId?: string): Promise<RestaurantView> {
+    const [aggregate, followersCount, myFollow] = await Promise.all([
+      this.prisma.review.aggregate({
+        where: { restaurantId: restaurant.id },
+        _avg: { rating: true },
+        _count: { rating: true },
+      }),
+      this.prisma.restaurantFollow.count({ where: { restaurantId: restaurant.id } }),
+      currentUserId
+        ? this.prisma.restaurantFollow.findUnique({ where: { userId_restaurantId: { userId: currentUserId, restaurantId: restaurant.id } } })
+        : Promise.resolve(null),
+    ]);
 
     return {
       id: restaurant.id,
@@ -263,11 +320,15 @@ export class RestaurantsService {
       imageUrl: restaurant.coverUrl ?? restaurant.avatar ?? undefined,
       isOpen: restaurant.isOpen,
       distance: distanceKm !== undefined ? Math.round(distanceKm * 10) / 10 : undefined,
-      specialties: restaurant.specialties,
+      specialties: restaurant.specialties ?? [],
       phone: restaurant.phone ?? undefined,
       hoursLabel: restaurant.hoursLabel ?? undefined,
       isVerified: restaurant.isVerified,
       ownerId: restaurant.ownerId,
+      followersCount,
+      isFollowing: myFollow !== null,
+      acceptsDelivery: restaurant.acceptsDelivery,
+      acceptsReservations: restaurant.acceptsReservations,
     };
   }
 

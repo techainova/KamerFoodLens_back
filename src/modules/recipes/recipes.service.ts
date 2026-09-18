@@ -108,7 +108,12 @@ export class RecipesService {
   }
 
   public async getDetail(recipeId: string): Promise<RecipeView> {
-    const recipe = await this.prisma.recipe.findUnique({ where: { id: recipeId }, include: RECIPE_INCLUDE });
+    // Accepte l'UUID Prisma classique OU le slug partagé avec le corpus du
+    // Scanner (ex. "ndole", "jollof-ghana") — voir dish-matcher.ts (kfl_back).
+    const recipe = await this.prisma.recipe.findFirst({
+      where: { OR: [{ id: recipeId }, { slug: recipeId }] },
+      include: RECIPE_INCLUDE,
+    });
     if (!recipe) {
       throw new NotFoundException('Recipe not found');
     }

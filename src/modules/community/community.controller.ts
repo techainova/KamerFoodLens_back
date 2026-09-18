@@ -39,10 +39,13 @@ export class CommunityController {
 
   @Public()
   @Get('posts')
-  @ApiOperation({ summary: 'Get paginated community feed posts' })
+  @ApiOperation({ summary: 'Get paginated community feed posts, optionally filtered by author' })
   @ApiResponse({ status: 200, description: 'Paginated posts' })
-  public async getPosts(@Query('page') page?: string): Promise<PaginatedResult<PostView>> {
-    return this.communityService.getPosts(page ? parseInt(page, 10) : 1);
+  public async getPosts(
+    @Query('page') page?: string,
+    @Query('authorId') authorId?: string,
+  ): Promise<PaginatedResult<PostView>> {
+    return this.communityService.getPosts(page ? parseInt(page, 10) : 1, authorId);
   }
 
   @ApiBearerAuth()

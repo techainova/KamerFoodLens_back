@@ -23,6 +23,7 @@ import { GoogleProfilePayload } from './strategies/google.strategy';
 import {
   renderOtpEmail,
   renderPasswordResetEmail,
+  renderPasswordChangedEmail,
   renderWelcomeEmail,
   KFL_LOGO_ATTACHMENT,
 } from '../../common/emails/email-templates';
@@ -60,7 +61,11 @@ export interface AuthResponse {
 const OTP_TTL_SECONDS = 10 * 60;
 const PENDING_REGISTRATION_TTL_SECONDS = 10 * 60;
 const REFRESH_TOKEN_PREFIX = 'refresh_token:';
-const RESET_TOKEN_PREFIX = 'reset_token:';
+const RESET_CODE_PREFIX = 'reset_code:';
+// Comptes Pro : fenêtre de validité du code plus courte (gèrent argent/menu/
+// réservations — un attaquant qui intercepte la boîte mail a moins de temps).
+const RESET_CODE_TTL_STANDARD_SECONDS = 15 * 60;
+const RESET_CODE_TTL_PRO_SECONDS = 5 * 60;
 const PENDING_REGISTRATION_PREFIX = 'pending_registration:';
 
 @Injectable()
@@ -230,15 +235,17 @@ export class AuthService {
   public async forgotPassword(email: string): Promise<{ message: string }> {
     const user = await this.prisma.user.findUnique({ where: { email } });
     if (!user) {
-      return { message: 'If an account exists, a reset link has been sent' };
+      // Same response whether or not the account exists — don't leak which emails are registered.
+      return { message: 'If an account exists, a reset code has been sent' };
     }
 
-    const resetToken = crypto.randomBytes(32).toString('hex');
-    await this.redis.set(`${RESET_TOKEN_PREFIX}${resetToken}`, user.id, 'EX', 3600);
+    const ttlSeconds = user.role === Role.pro ? RESET_CODE_TTL_PRO_SECONDS : RESET_CODE_TTL_STANDARD_SECONDS;
+    const resetCode = crypto.randomInt(100000, 999999).toString();
+    await this.redis.set(`${RESET_CODE_PREFIX}${email}`, resetCode, 'EX', ttlSeconds);
 
     if (this.configService.get<string>('NODE_ENV') !== 'production') {
       // eslint-disable-next-line no-console
-      console.log(`[DEV] Password reset token for ${user.email}: ${resetToken}`);
+      console.log(`[DEV] Password reset code for ${user.email}: ${resetCode}`);
     }
 
     try {
@@ -246,7 +253,7 @@ export class AuthService {
         from: this.configService.get<string>('SMTP_FROM'),
         to: user.email,
         subject: 'KmerFoodLens — Réinitialisation du mot de passe',
-        html: renderPasswordResetEmail(resetToken),
+        html: renderPasswordResetEmail(resetCode, Math.round(ttlSeconds / 60)),
         attachments: [KFL_LOGO_ATTACHMENT],
       });
     } catch (error) {
@@ -254,18 +261,42 @@ export class AuthService {
       console.error(`Failed to send reset email to ${user.email}:`, error instanceof Error ? error.message : error);
     }
 
-    return { message: 'If an account exists, a reset link has been sent' };
+    return { message: 'If an account exists, a reset code has been sent' };
   }
 
-  public async resetPassword(token: string, newPassword: string): Promise<{ message: string }> {
-    const userId = await this.redis.get(`${RESET_TOKEN_PREFIX}${token}`);
-    if (!userId) {
-      throw new BadRequestException('Invalid or expired reset token');
+  public async resetPassword(email: string, otp: string, newPassword: string): Promise<{ message: string }> {
+    const storedCode = await this.redis.get(`${RESET_CODE_PREFIX}${email}`);
+    if (!storedCode || storedCode !== otp) {
+      throw new BadRequestException('Invalid or expired reset code');
+    }
+
+    const user = await this.prisma.user.findUnique({ where: { email } });
+    if (!user) {
+      throw new BadRequestException('Invalid or expired reset code');
     }
 
     const passwordHash = await bcrypt.hash(newPassword, 12);
-    await this.prisma.user.update({ where: { id: userId }, data: { passwordHash } });
-    await this.redis.del(`${RESET_TOKEN_PREFIX}${token}`);
+    await this.prisma.user.update({ where: { id: user.id }, data: { passwordHash } });
+    await this.redis.del(`${RESET_CODE_PREFIX}${email}`);
+
+    // The code is single-use even on failure to reset a session: kill whatever
+    // refresh token is currently active (there's only ever one per account —
+    // see login()) so a compromised session doesn't survive the reset, on any
+    // account, and notify the owner so they notice a change they didn't make.
+    await this.redis.del(`${REFRESH_TOKEN_PREFIX}${user.id}`);
+
+    try {
+      await this.mailTransporter.sendMail({
+        from: this.configService.get<string>('SMTP_FROM'),
+        to: user.email,
+        subject: 'KmerFoodLens — Mot de passe modifié',
+        html: renderPasswordChangedEmail(),
+        attachments: [KFL_LOGO_ATTACHMENT],
+      });
+    } catch (error) {
+      // eslint-disable-next-line no-console
+      console.error(`Failed to send password-changed email to ${user.email}:`, error instanceof Error ? error.message : error);
+    }
 
     return { message: 'Password has been reset successfully' };
   }

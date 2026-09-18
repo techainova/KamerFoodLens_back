@@ -84,6 +84,7 @@ enum FavoriteType {
   dish
   restaurant
   recipe
+  post
 }
 
 enum PayoutStatus {
@@ -133,6 +134,7 @@ model User {
   otps               Otp[]
   restaurants         Restaurant[]      @relation("RestaurantOwner")
   reviews             Review[]
+  restaurantFollows   RestaurantFollow[]
   orders              Order[]
   payments            Payment[]
   wallet              Wallet?
@@ -234,11 +236,13 @@ model Restaurant {
   avatar       String?
   coverUrl     String?
   priceRange   Int      @default(2)
-  specialties  String[]
+  specialties  String[] @default([])
   hoursLabel   String?
   isOpen       Boolean  @default(true)
   isActive     Boolean  @default(true)
   isVerified   Boolean  @default(false)
+  acceptsDelivery     Boolean @default(true)
+  acceptsReservations Boolean @default(true)
   createdAt    DateTime @default(now())
   updatedAt    DateTime @updatedAt
 
@@ -246,9 +250,23 @@ model Restaurant {
   reviews   Review[]
   orders    Order[]
   promos    Promo[]
+  followers RestaurantFollow[]
 
   @@index([lat, lng])
   @@map("restaurants")
+}
+
+model RestaurantFollow {
+  id           String     @id @default(uuid())
+  userId       String
+  user         User       @relation(fields: [userId], references: [id], onDelete: Cascade)
+  restaurantId String
+  restaurant   Restaurant @relation(fields: [restaurantId], references: [id], onDelete: Cascade)
+  createdAt    DateTime   @default(now())
+
+  @@unique([userId, restaurantId])
+  @@index([restaurantId])
+  @@map("restaurant_follows")
 }
 
 model MenuItem {
@@ -762,6 +780,11 @@ model SystemLog {
 
 model Recipe {
   id          String           @id @default(uuid())
+  // Identifiant stable partagé avec le corpus de reconnaissance du Scanner
+  // (dish-matcher.ts côté backend / class_names.json du modèle TFLite embarqué) —
+  // permet à "Voir la recette" depuis un résultat de scan de retrouver la bonne
+  // fiche recette sans dépendre de l'UUID généré à la création.
+  slug        String?          @unique
   name        String
   nameEN      String?
   region      String

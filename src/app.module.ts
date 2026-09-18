@@ -34,6 +34,8 @@ import { AdminModule } from './modules/admin/admin.module';
 import { ProModule } from './modules/pro/pro.module';
 import { RecipesModule } from './modules/recipes/recipes.module';
 import { MessagesModule } from './modules/messages/messages.module';
+import { VideosModule } from './modules/videos/videos.module';
+import { NotificationsModule } from './modules/notifications/notifications.module';
 
 @Module({
   imports: [
@@ -93,6 +95,8 @@ import { MessagesModule } from './modules/messages/messages.module';
     AdminModule,
     RecipesModule,
     MessagesModule,
+    VideosModule,
+    NotificationsModule,
   ],
   providers: [
     { provide: APP_FILTER, useClass: HttpExceptionFilter },

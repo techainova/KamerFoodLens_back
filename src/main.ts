@@ -26,6 +26,26 @@ async function bootstrap(): Promise<void> {
     },
   );
 
+  // Many "action" endpoints take no DTO (follow/unfollow, event/course
+  // register-unregister, order cancel, like, mark-viewed…). The frontend's
+  // axios instance sends `Content-Type: application/json` on every request by
+  // default, even with no data — Fastify's stock JSON parser throws a 500
+  // ("Body cannot be empty...") when it's handed that content-type on a
+  // zero-length body instead of just treating it as absent. Strip the header
+  // before Fastify's parser sees it in that one case, so it falls back to its
+  // normal "no body" behaviour — exactly as if the client had sent nothing.
+  // (Registering a competing 'application/json' content-type parser here
+  // instead would collide with the one @nestjs/platform-fastify registers
+  // for itself during app.init(), crashing the server on boot.)
+  app.getHttpAdapter().getInstance().addHook('onRequest', (request, _reply, done) => {
+    const contentLength = request.headers['content-length'];
+    const contentType = request.headers['content-type'];
+    if ((!contentLength || contentLength === '0') && contentType?.includes('application/json')) {
+      delete request.headers['content-type'];
+    }
+    done();
+  });
+
   const configService = app.get(ConfigService);
 
   await app.register(helmet, {

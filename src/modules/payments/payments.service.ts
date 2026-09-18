@@ -1,4 +1,4 @@
-import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
+import { BadGatewayException, BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { Payment, PaymentMethod, PaymentStatus, TransactionType, Wallet } from '@prisma/client';
 import Stripe from 'stripe';
@@ -6,6 +6,7 @@ import { v4 as uuid } from 'uuid';
 import { PrismaService } from '../../prisma/prisma.service';
 import { InitiatePaymentDto } from './dto/initiate-payment.dto';
 import { TopupWalletDto } from './dto/topup-wallet.dto';
+import { NotificationsService } from '../notifications/notifications.service';
 
 export interface InitiatePaymentResult {
   paymentUrl?: string;
@@ -28,6 +29,7 @@ export class PaymentsService {
   public constructor(
     private readonly prisma: PrismaService,
     private readonly configService: ConfigService,
+    private readonly notificationsService: NotificationsService,
   ) {
     const stripeSecretKey = this.configService.get<string>('STRIPE_SECRET_KEY');
     this.stripe = stripeSecretKey ? new Stripe(stripeSecretKey, { apiVersion: '2024-06-20' }) : null;
@@ -69,7 +71,8 @@ export class PaymentsService {
 
     const payment = await this.prisma.payment.findFirst({ where: { externalRef } });
     if (payment) {
-      await this.prisma.payment.update({ where: { id: payment.id }, data: { status } });
+      const updated = await this.prisma.payment.update({ where: { id: payment.id }, data: { status } });
+      await this.notifyPaymentStatus(updated);
     }
 
     return { received: true };
@@ -96,13 +99,14 @@ export class PaymentsService {
       const payment = await this.prisma.payment.findFirst({ where: { externalRef: intent.id } });
 
       if (payment) {
-        await this.prisma.payment.update({
+        const updated = await this.prisma.payment.update({
           where: { id: payment.id },
           data: {
             status:
               event.type === 'payment_intent.succeeded' ? PaymentStatus.succeeded : PaymentStatus.failed,
           },
         });
+        await this.notifyPaymentStatus(updated);
       }
     }
 
@@ -158,11 +162,15 @@ export class PaymentsService {
     const wallet = await this.getWallet(userId);
 
     if (wallet.balanceXAF < amountXAF) {
-      await this.prisma.payment.update({ where: { id: paymentId }, data: { status: PaymentStatus.failed } });
+      const failed = await this.prisma.payment.update({
+        where: { id: paymentId },
+        data: { status: PaymentStatus.failed },
+      });
+      await this.notifyPaymentStatus(failed);
       throw new BadRequestException('Insufficient wallet balance');
     }
 
-    await this.prisma.$transaction([
+    const [, , succeeded] = await this.prisma.$transaction([
       this.prisma.wallet.update({ where: { userId }, data: { balanceXAF: { decrement: amountXAF } } }),
       this.prisma.transaction.create({
         data: {
@@ -174,6 +182,7 @@ export class PaymentsService {
       }),
       this.prisma.payment.update({ where: { id: paymentId }, data: { status: PaymentStatus.succeeded } }),
     ]);
+    await this.notifyPaymentStatus(succeeded);
 
     return { paymentId };
   }
@@ -187,11 +196,19 @@ export class PaymentsService {
       throw new BadRequestException('Stripe is not configured');
     }
 
-    const intent = await this.stripe.paymentIntents.create({
-      amount: amountXAF,
-      currency: 'xaf',
-      metadata: { paymentId, userId: userId ?? '' },
-    });
+    let intent: Stripe.PaymentIntent;
+    try {
+      intent = await this.stripe.paymentIntents.create({
+        amount: amountXAF,
+        currency: 'xaf',
+        metadata: { paymentId, userId: userId ?? '' },
+      });
+    } catch (error) {
+      await this.prisma.payment.update({ where: { id: paymentId }, data: { status: PaymentStatus.failed } });
+      throw new BadGatewayException(
+        `Stripe is unreachable: ${error instanceof Error ? error.message : 'unknown error'}`,
+      );
+    }
 
     await this.prisma.payment.update({ where: { id: paymentId }, data: { externalRef: intent.id } });
 
@@ -207,28 +224,63 @@ export class PaymentsService {
     const siteId = this.configService.get<string>('CINETPAY_SITE_ID');
     const externalRef = `${transactionRef}-${uuid().slice(0, 8)}`;
 
-    if (!apiKey || !siteId) {
+    // Placeholder values (e.g. still the sample ".env.example" strings) are
+    // truthy but not real credentials — treat them the same as "not
+    // configured" rather than letting them reach CinetPay's API as garbage.
+    if (!apiKey || !siteId || apiKey === 'your_cinetpay_api_key' || siteId === 'your_cinetpay_site_id') {
       await this.prisma.payment.update({ where: { id: paymentId }, data: { externalRef } });
       return { paymentId, paymentUrl: undefined };
     }
 
-    const response = await fetch('https://api-checkout.cinetpay.com/v2/payment', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        apikey: apiKey,
-        site_id: siteId,
-        transaction_id: externalRef,
-        amount: amountXAF,
-        currency: 'XAF',
-        description: 'KmerFoodLens payment',
-      }),
-    });
-
-    const result = (await response.json()) as { data?: { payment_url?: string } };
+    let result: { data?: { payment_url?: string } };
+    try {
+      const response = await fetch('https://api-checkout.cinetpay.com/v2/payment', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          apikey: apiKey,
+          site_id: siteId,
+          transaction_id: externalRef,
+          amount: amountXAF,
+          currency: 'XAF',
+          description: 'KmerFoodLens payment',
+        }),
+      });
+      result = (await response.json()) as { data?: { payment_url?: string } };
+    } catch (error) {
+      await this.prisma.payment.update({ where: { id: paymentId }, data: { status: PaymentStatus.failed } });
+      throw new BadGatewayException(
+        `CinetPay is unreachable: ${error instanceof Error ? error.message : 'unknown error'}`,
+      );
+    }
 
     await this.prisma.payment.update({ where: { id: paymentId }, data: { externalRef } });
 
     return { paymentId, paymentUrl: result.data?.payment_url };
+  }
+
+  private async notifyPaymentStatus(payment: Payment): Promise<void> {
+    if (payment.status !== PaymentStatus.succeeded && payment.status !== PaymentStatus.failed) {
+      return;
+    }
+
+    const isTopup = !payment.orderId;
+    const succeeded = payment.status === PaymentStatus.succeeded;
+    const amountLabel = `${payment.amountXAF.toLocaleString()} XAF`;
+
+    const title = succeeded ? 'Paiement réussi' : 'Paiement échoué';
+    const body = isTopup
+      ? succeeded
+        ? `Votre rechargement de ${amountLabel} a été effectué avec succès.`
+        : `Votre rechargement de ${amountLabel} a échoué. Veuillez réessayer.`
+      : succeeded
+        ? `Votre paiement de ${amountLabel} a été confirmé.`
+        : `Votre paiement de ${amountLabel} a échoué. Veuillez réessayer.`;
+
+    await this.notificationsService.create(payment.userId, 'payment', title, body, {
+      paymentId: payment.id,
+      orderId: payment.orderId,
+      status: payment.status,
+    });
   }
 }

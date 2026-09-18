@@ -1,9 +1,10 @@
-import { Body, Controller, Delete, Get, Param, Patch, Post, Query } from '@nestjs/common';
+import { Body, Controller, Delete, Get, Param, Patch, Post, Query, UseGuards } from '@nestjs/common';
 import { ApiBearerAuth, ApiOperation, ApiResponse, ApiTags } from '@nestjs/swagger';
 import { Review } from '@prisma/client';
 import { Public } from '../../common/decorators/public.decorator';
 import { Roles } from '../../common/decorators/roles.decorator';
 import { CurrentUser, AuthenticatedUser } from '../../common/decorators/current-user.decorator';
+import { OptionalJwtAuthGuard } from '../../common/guards/optional-jwt-auth.guard';
 import { SearchRestaurantsDto } from './dto/search-restaurants.dto';
 import { CreateReviewDto } from './dto/create-review.dto';
 import { CreateMenuItemDto } from './dto/create-menu-item.dto';
@@ -26,19 +27,53 @@ export class RestaurantsController {
   public constructor(private readonly restaurantsService: RestaurantsService) {}
 
   @Public()
+  @UseGuards(OptionalJwtAuthGuard)
   @Get()
   @ApiOperation({ summary: 'Search restaurants by geo-location, cuisine, and pagination' })
   @ApiResponse({ status: 200, description: 'Restaurant list' })
-  public async search(@Query() dto: SearchRestaurantsDto): Promise<ListResult<RestaurantView>> {
-    return this.restaurantsService.search(dto);
+  public async search(
+    @CurrentUser() user: AuthenticatedUser | undefined,
+    @Query() dto: SearchRestaurantsDto,
+  ): Promise<ListResult<RestaurantView>> {
+    return this.restaurantsService.search(dto, user?.id);
+  }
+
+  @ApiBearerAuth()
+  @Get('followed')
+  @ApiOperation({ summary: 'List restaurants the current user follows' })
+  @ApiResponse({ status: 200, description: 'Followed restaurants' })
+  public async getFollowed(@CurrentUser() user: AuthenticatedUser): Promise<RestaurantView[]> {
+    return this.restaurantsService.getFollowedRestaurants(user.id);
   }
 
   @Public()
+  @UseGuards(OptionalJwtAuthGuard)
   @Get(':id')
   @ApiOperation({ summary: 'Get restaurant details' })
   @ApiResponse({ status: 200, description: 'Restaurant details' })
-  public async findById(@Param('id') id: string): Promise<RestaurantView> {
-    return this.restaurantsService.findById(id);
+  public async findById(
+    @CurrentUser() user: AuthenticatedUser | undefined,
+    @Param('id') id: string,
+  ): Promise<RestaurantView> {
+    return this.restaurantsService.findById(id, user?.id);
+  }
+
+  @Roles('standard', 'pro', 'admin')
+  @ApiBearerAuth()
+  @Post(':id/follow')
+  @ApiOperation({ summary: 'Follow a restaurant' })
+  @ApiResponse({ status: 201, description: 'Now following' })
+  public async follow(@CurrentUser() user: AuthenticatedUser, @Param('id') id: string) {
+    return this.restaurantsService.follow(user.id, id);
+  }
+
+  @Roles('standard', 'pro', 'admin')
+  @ApiBearerAuth()
+  @Delete(':id/follow')
+  @ApiOperation({ summary: 'Unfollow a restaurant' })
+  @ApiResponse({ status: 200, description: 'Unfollowed' })
+  public async unfollow(@CurrentUser() user: AuthenticatedUser, @Param('id') id: string) {
+    return this.restaurantsService.unfollow(user.id, id);
   }
 
   @Public()

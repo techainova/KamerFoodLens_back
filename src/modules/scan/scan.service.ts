@@ -8,6 +8,7 @@ import { ScanAudioDto } from './dto/scan-audio.dto';
 import { ScanTextDto } from './dto/scan-text.dto';
 import { GamesService } from '../games/games.service';
 import { S3UploadService } from '../../common/services/s3-upload.service';
+import { matchDishByDescription, getDishRegion, UNKNOWN_CLASS } from './dish-matcher';
 
 export interface ScanResponse {
   scanId: string;
@@ -60,7 +61,20 @@ export class ScanService {
     const mimeType = dto.mimeType ?? 'image/jpeg';
     const imageBuffer = Buffer.from(dto.imageBase64, 'base64');
 
-    const prediction = await this.callAiService('/predict', imageBuffer, mimeType);
+    let prediction: AiPrediction;
+    try {
+      prediction = await this.callAiService('/predict', imageBuffer, mimeType);
+    } catch (error) {
+      // Pas de service IA distant déployé (ou injoignable) : si l'app mobile a déjà
+      // calculé un résultat via son modèle TFLite embarqué (fallback hors-ligne),
+      // on l'utilise pour que le scan soit quand même historisé/synchronisé en base
+      // au lieu d'échouer silencieusement pour l'utilisateur.
+      if (dto.localClassId) {
+        prediction = { plat: dto.localClassId, confiance: dto.localConfidence ?? 0.5 };
+      } else {
+        throw error;
+      }
+    }
 
     const imageUrl = await this.s3UploadService.uploadBase64Image(dto.imageBase64, mimeType, 'scans');
 
@@ -86,7 +100,9 @@ export class ScanService {
   }
 
   public async scanText(userId: string | undefined, dto: ScanTextDto): Promise<ScanResponse> {
-    const prediction = await this.callTextRecognition(dto.text);
+    // Recherche locale (aucun service externe requis) — voir dish-matcher.ts.
+    const match = matchDishByDescription(dto.text);
+    const prediction: AiPrediction = { plat: match.classId, confiance: match.confidence };
 
     const scanId = userId
       ? await this.persistScanResult(userId, prediction, 'text')
@@ -111,7 +127,7 @@ export class ScanService {
       classId: doc.dishId,
       dishName: doc.dishName,
       dishNameEN: doc.dishName,
-      region: '',
+      region: getDishRegion(doc.dishId),
       confidence: doc.confidence,
       imageUrl: doc.imageUrl,
     };
@@ -169,33 +185,6 @@ export class ScanService {
     }
   }
 
-  private async callTextRecognition(description: string): Promise<AiPrediction> {
-    const baseUrl = this.configService.get<string>('AI_SERVICE_URL');
-
-    try {
-      const response = await fetch(`${baseUrl}/identify_by_text`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ description }),
-      });
-
-      if (!response.ok) {
-        throw new Error(`AI service responded with status ${response.status}`);
-      }
-
-      const data = (await response.json()) as AiServiceResponse;
-      if (!data.prediction) {
-        throw new Error(data.error ?? 'AI service returned no prediction');
-      }
-
-      return data.prediction;
-    } catch (error) {
-      throw new BadGatewayException(
-        `Unable to reach the AI recognition service: ${error instanceof Error ? error.message : 'unknown error'}`,
-      );
-    }
-  }
-
   private toScanResponse(scanId: string, prediction: AiPrediction, imageUrl?: string): ScanResponse {
     const displayName = this.formatClassIdAsName(prediction.plat);
     return {
@@ -203,7 +192,7 @@ export class ScanService {
       classId: prediction.plat,
       dishName: displayName,
       dishNameEN: displayName,
-      region: '',
+      region: getDishRegion(prediction.plat),
       confidence: prediction.confiance,
       imageUrl,
     };
@@ -231,8 +220,11 @@ export class ScanService {
   }
 
   private formatClassIdAsName(classId: string): string {
+    if (classId === UNKNOWN_CLASS) {
+      return 'Inconnu';
+    }
     return classId
-      .split('_')
+      .split(/[-_]/)
       .filter((word) => word.length > 0)
       .map((word) => word.charAt(0).toUpperCase() + word.slice(1))
       .join(' ');

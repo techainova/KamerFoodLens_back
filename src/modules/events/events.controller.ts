@@ -37,6 +37,15 @@ export class EventsController {
     return this.eventsService.getMyRegistrations(user.id);
   }
 
+  @Roles('pro', 'admin')
+  @ApiBearerAuth()
+  @Get('managed')
+  @ApiOperation({ summary: 'Get events created by the current Pro account' })
+  @ApiResponse({ status: 200, description: 'Managed events' })
+  public async getManaged(@CurrentUser() user: AuthenticatedUser): Promise<EventView[]> {
+    return this.eventsService.getManagedByOrganizer(user.id);
+  }
+
   @Public()
   @Get(':id')
   @ApiOperation({ summary: 'Get event details' })
@@ -72,7 +81,7 @@ export class EventsController {
   @Post()
   @ApiOperation({ summary: 'Create an event (Pro only)' })
   @ApiResponse({ status: 201, description: 'Event created' })
-  public async create(@CurrentUser() user: AuthenticatedUser, @Body() dto: CreateEventDto): Promise<Event> {
+  public async create(@CurrentUser() user: AuthenticatedUser, @Body() dto: CreateEventDto): Promise<EventView> {
     return this.eventsService.create(user.id, dto);
   }
 

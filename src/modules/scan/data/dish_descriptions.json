@@ -1,0 +1,134 @@
+{
+  "ekwang": {
+    "nomFR": "Ekwang",
+    "nomEN": "Ekwang",
+    "region": "Sud-Ouest, Cameroun",
+    "description": "Plat à base de cocoyam (taro) râpé et enroulé dans des feuilles de cocoyam, mijoté longuement dans une sauce à l'huile de palme avec poisson fumé ou viande.",
+    "ingredients": ["cocoyam râpé", "taro", "feuilles de cocoyam", "huile de palme", "poisson fumé", "piment", "crevettes séchées"],
+    "aliases": ["ekwang", "cocoyam roll"],
+    "tempsPreparationMin": 150,
+    "niveauEpice": 2,
+    "accompagnements": ["aucun (plat complet)"]
+  },
+  "eru": {
+    "nomFR": "Eru",
+    "nomEN": "Eru",
+    "region": "Sud-Ouest, Cameroun",
+    "description": "Ragoût de feuilles d'eru (okok) finement émincées, cuites avec des feuilles de waterleaf, de l'huile de palme, du poisson fumé et de la viande, traditionnellement servi avec du fufu de manioc ou du garri.",
+    "ingredients": ["feuilles d'eru", "okok", "waterleaf", "huile de palme", "poisson fumé", "viande de bœuf", "crevettes séchées"],
+    "aliases": ["eru", "okok", "feuilles eru"],
+    "tempsPreparationMin": 75,
+    "niveauEpice": 2,
+    "accompagnements": ["fufu de manioc", "garri", "miondo"]
+  },
+  "jollof-ghana": {
+    "nomFR": "Riz Jollof (Ghana)",
+    "nomEN": "Ghanaian Jollof Rice",
+    "region": "Ghana, Afrique de l'Ouest",
+    "description": "Riz cuit dans une sauce tomate et poivron épicée, parfumée aux épices ouest-africaines, souvent accompagné de poulet, de bœuf ou de poisson grillé.",
+    "ingredients": ["riz long grain", "tomates", "poivron rouge", "oignon", "piment scotch bonnet", "épices jollof", "bouillon"],
+    "aliases": ["jollof", "riz jollof", "jolof rice"],
+    "tempsPreparationMin": 60,
+    "niveauEpice": 3,
+    "accompagnements": ["poulet grillé", "salade", "plantain frit"]
+  },
+  "ndole": {
+    "nomFR": "Ndolé",
+    "nomEN": "Ndole",
+    "region": "Littoral, Cameroun",
+    "description": "Plat mijoté à base de feuilles de ndolé amères, pâte d'arachide et poisson fumé ou viande.",
+    "ingredients": ["feuilles de ndolé", "pâte d'arachide", "arachide", "poisson fumé", "crevettes séchées", "huile de palme"],
+    "aliases": ["ndole", "ndolé", "bitter leaf stew"],
+    "tempsPreparationMin": 90,
+    "niveauEpice": 2,
+    "accompagnements": ["plantain", "riz", "miondo"]
+  },
+  "palm-nut-soup": {
+    "nomFR": "Soupe de noix de palme",
+    "nomEN": "Palm Nut Soup",
+    "region": "Afrique Centrale et de l'Ouest",
+    "description": "Soupe onctueuse préparée à partir d'extrait de noix de palme, mijotée avec viande, poisson fumé et épices, servie en plat principal avec un féculent.",
+    "ingredients": ["extrait de noix de palme", "noix de palme", "palmiste", "poisson fumé", "viande de bœuf", "piment", "gingembre", "épices"],
+    "aliases": ["soupe palme", "banga", "palm nut", "soupe de palme"],
+    "tempsPreparationMin": 100,
+    "niveauEpice": 2,
+    "accompagnements": ["fufu", "riz", "banku"]
+  },
+  "waakye": {
+    "nomFR": "Waakye",
+    "nomEN": "Waakye",
+    "region": "Ghana, Afrique de l'Ouest",
+    "description": "Riz et haricots cuits ensemble avec des feuilles de sorgho (ou bicarbonate) qui leur donnent une teinte rouge-brun caractéristique, servi avec garri, spaghetti, œuf et sauce shito.",
+    "ingredients": ["riz", "haricots noirs", "haricots", "feuilles de sorgho", "garri", "sauce shito", "œuf"],
+    "aliases": ["waakye", "waakie"],
+    "tempsPreparationMin": 80,
+    "niveauEpice": 2,
+    "accompagnements": ["garri", "spaghetti", "œuf bouilli", "avocat"]
+  },
+  "poulet-dg": {
+    "nomFR": "Poulet DG",
+    "nomEN": "Chicken DG",
+    "region": "Centre, Cameroun",
+    "description": "Poulet frit puis sauté avec des plantains mûrs frits, des légumes et des épices, un plat emblématique des restaurants camerounais haut de gamme.",
+    "ingredients": ["poulet", "plantain mûr", "plantain frit", "tomate", "oignon", "poivron", "ail", "gingembre", "épices"],
+    "aliases": ["poulet dg", "directeur général", "chicken dg", "dg"],
+    "tempsPreparationMin": 60,
+    "niveauEpice": 2,
+    "accompagnements": ["riz blanc", "plantain"]
+  },
+  "koki": {
+    "nomFR": "Koki",
+    "nomEN": "Koki Beans Cake",
+    "region": "Ouest, Cameroun",
+    "description": "Galette de haricots noirs pilés et épicés, mélangés à l'huile de palme et aux épices, puis cuits enveloppés dans des feuilles de bananier.",
+    "ingredients": ["haricots noirs", "haricots", "huile de palme", "piment", "oignon", "feuilles de bananier"],
+    "aliases": ["koki", "koki beans", "gâteau de haricots"],
+    "tempsPreparationMin": 90,
+    "niveauEpice": 2,
+    "accompagnements": ["miondo", "riz"]
+  },
+  "miondo": {
+    "nomFR": "Miondo",
+    "nomEN": "Miondo",
+    "region": "Littoral, Cameroun",
+    "description": "Bâtonnets de manioc fermenté et cuit à la vapeur dans des feuilles de bananier, accompagnement traditionnel de nombreux plats camerounais.",
+    "ingredients": ["manioc fermenté", "manioc", "feuilles de bananier"],
+    "aliases": ["miondo", "bâton de manioc", "kwacoco", "bobolo"],
+    "tempsPreparationMin": 60,
+    "niveauEpice": 0,
+    "accompagnements": ["ndolé", "eru", "poisson braisé"]
+  },
+  "braise": {
+    "nomFR": "Poisson braisé",
+    "nomEN": "Grilled Fish",
+    "region": "Cameroun",
+    "description": "Poisson entier mariné avec des épices camerounaises et grillé au charbon, servi avec du plantain frit ou du miondo.",
+    "ingredients": ["poisson", "tilapia", "capitaine", "épices", "piment", "ail", "gingembre", "oignon"],
+    "aliases": ["poisson braisé", "braisé", "grilled fish", "poulet braisé"],
+    "tempsPreparationMin": 45,
+    "niveauEpice": 3,
+    "accompagnements": ["plantain frit", "miondo", "salade"]
+  },
+  "mbongo": {
+    "nomFR": "Mbongo Tchobi",
+    "nomEN": "Black Pepper Stew",
+    "region": "Littoral, Cameroun",
+    "description": "Ragoût sombre et épicé à base d'écorce carbonisée de mbongo (prunus africana) qui lui donne sa couleur noire caractéristique, mijoté avec du poisson ou de la viande.",
+    "ingredients": ["écorce de mbongo", "mbongo", "poisson", "viande", "piment", "épices noires", "gingembre"],
+    "aliases": ["mbongo", "mbongo tchobi", "ragoût noir"],
+    "tempsPreparationMin": 120,
+    "niveauEpice": 4,
+    "accompagnements": ["miondo", "plantain", "riz"]
+  },
+  "okok": {
+    "nomFR": "Okok au Pistache",
+    "nomEN": "Okok with Groundnut",
+    "region": "Centre, Cameroun",
+    "description": "Feuilles d'okok (gnetum africanum) cuites avec de la pâte de pistache (graines de courge), de la viande fumée et des épices.",
+    "ingredients": ["feuilles d'okok", "pistache", "pâte de pistache", "graines de courge", "viande fumée", "crevettes"],
+    "aliases": ["okok", "okok pistache", "feuilles okok", "pistache"],
+    "tempsPreparationMin": 90,
+    "niveauEpice": 2,
+    "accompagnements": ["miondo", "plantain"]
+  }
+}

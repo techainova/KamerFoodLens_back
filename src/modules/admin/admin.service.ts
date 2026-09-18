@@ -17,9 +17,9 @@ import {
   User,
 } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
-import { PushJobData } from '../../jobs/push.processor';
 import { PayoutJobData } from '../../jobs/payout.processor';
 import { UpdateSettingsDto } from './dto/update-settings.dto';
+import { NotificationsService } from '../notifications/notifications.service';
 
 export interface AdminDashboardStats {
   totalUsers: number;
@@ -44,7 +44,7 @@ const SETTINGS_ID = 'singleton';
 export class AdminService {
   public constructor(
     private readonly prisma: PrismaService,
-    @InjectQueue('push') private readonly pushQueue: Queue<PushJobData>,
+    private readonly notificationsService: NotificationsService,
     @InjectQueue('payout') private readonly payoutQueue: Queue<PayoutJobData>,
   ) {}
 
@@ -108,11 +108,25 @@ export class AdminService {
 
   public async suspendUser(id: string, days: number): Promise<User> {
     const suspendedUntil = new Date(Date.now() + days * 24 * 60 * 60 * 1000);
-    return this.prisma.user.update({ where: { id }, data: { suspendedUntil, isActive: false } });
+    const user = await this.prisma.user.update({ where: { id }, data: { suspendedUntil, isActive: false } });
+    await this.notificationsService.create(
+      id,
+      'system',
+      'Compte suspendu',
+      `Votre compte a été suspendu pour ${days} jour(s), jusqu'au ${suspendedUntil.toLocaleDateString('fr-FR')}.`,
+    );
+    return user;
   }
 
   public async banUser(id: string): Promise<User> {
-    return this.prisma.user.update({ where: { id }, data: { isBanned: true, isActive: false } });
+    const user = await this.prisma.user.update({ where: { id }, data: { isBanned: true, isActive: false } });
+    await this.notificationsService.create(
+      id,
+      'system',
+      'Compte banni',
+      'Votre compte a été banni pour non-respect des conditions d\'utilisation.',
+    );
+    return user;
   }
 
   public async getProRequests(status: ProRequestStatus | undefined): Promise<ProRequest[]> {
@@ -161,6 +175,13 @@ export class AdminService {
       }),
     ]);
 
+    await this.notificationsService.create(
+      request.userId,
+      'system',
+      'Compte Pro approuvé',
+      'Félicitations ! Votre demande de compte Pro a été approuvée. Votre restaurant est maintenant visible sur KmerFoodLens.',
+    );
+
     return updated;
   }
 
@@ -170,10 +191,19 @@ export class AdminService {
       throw new NotFoundException('Pro request not found');
     }
 
-    return this.prisma.proRequest.update({
+    const updated = await this.prisma.proRequest.update({
       where: { id },
       data: { status: ProRequestStatus.rejected, rejectionReason: reason },
     });
+
+    await this.notificationsService.create(
+      request.userId,
+      'system',
+      'Compte Pro refusé',
+      `Votre demande de compte Pro a été refusée. Motif : ${reason}`,
+    );
+
+    return updated;
   }
 
   public async approveProRequestByUserId(userId: string): Promise<ProRequest> {
@@ -256,6 +286,13 @@ export class AdminService {
       data: { status: PayoutStatus.approved },
     });
     await this.payoutQueue.add('process', { payoutId: id });
+    await this.notificationsService.create(
+      payout.userId,
+      'payment',
+      'Retrait approuvé',
+      `Votre demande de retrait de ${payout.amountXAF.toLocaleString()} XAF a été approuvée et est en cours de traitement.`,
+      { payoutId: payout.id },
+    );
     return updated;
   }
 
@@ -268,13 +305,15 @@ export class AdminService {
           : { id: target };
 
     const users = await this.prisma.user.findMany({ where, select: { id: true } });
-    const deviceTokens = await this.prisma.deviceToken.findMany({
-      where: { userId: { in: users.map((user) => user.id) } },
-      select: { token: true },
-    });
-    const tokens = deviceTokens.map((deviceToken) => deviceToken.token);
-
-    await this.pushQueue.add('send', { target, title, body, tokens });
+    // Persiste une notification en base pour chaque destinataire (visible dans
+    // GET /users/notifications) en plus du push Expo — sans ceci, la diffusion
+    // admin n'atteint que les appareils déjà connectés au moment de l'envoi.
+    await this.notificationsService.createForMany(
+      users.map((user) => user.id),
+      'system',
+      title,
+      body,
+    );
     return { queued: true };
   }
 
@@ -339,16 +378,13 @@ export class AdminService {
     const winnerUserIds = winnerTickets.map((ticket) => ticket.userId);
 
     await this.prisma.tombola.update({ where: { id: tombola.id }, data: { isActive: false } });
-    const winnerDeviceTokens = await this.prisma.deviceToken.findMany({
-      where: { userId: { in: winnerUserIds } },
-      select: { token: true },
-    });
-    await this.pushQueue.add('send', {
-      target: 'tombola_winners',
-      title: 'Félicitations !',
-      body: `Vous avez gagné à la tombola "${tombola.title}" !`,
-      tokens: winnerDeviceTokens.map((deviceToken) => deviceToken.token),
-    });
+    await this.notificationsService.createForMany(
+      winnerUserIds,
+      'system',
+      'Félicitations !',
+      `Vous avez gagné à la tombola "${tombola.title}" !`,
+      { tombolaId: tombola.id },
+    );
 
     return { tombolaId: tombola.id, winners: winnerUserIds };
   }

@@ -1,8 +1,9 @@
-import { ConflictException, ForbiddenException, Injectable, NotFoundException } from '@nestjs/common';
-import { Course, CourseLevel, Enrollment, Lesson, LessonProgress, User } from '@prisma/client';
+import { BadRequestException, ConflictException, ForbiddenException, Injectable, NotFoundException } from '@nestjs/common';
+import { Course, CourseLevel, Enrollment, Lesson, LessonProgress, TransactionType, User } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
 import { CreateCourseDto } from './dto/create-course.dto';
 import { UpdateCourseDto } from './dto/update-course.dto';
+import { NotificationsService } from '../notifications/notifications.service';
 
 interface PaginatedResult<T> {
   items: T[];
@@ -57,7 +58,10 @@ const PAGE_SIZE = 20;
 
 @Injectable()
 export class CoursesService {
-  public constructor(private readonly prisma: PrismaService) {}
+  public constructor(
+    private readonly prisma: PrismaService,
+    private readonly notificationsService: NotificationsService,
+  ) {}
 
   public async findAll(page: number): Promise<PaginatedResult<CourseView>> {
     const skip = (page - 1) * PAGE_SIZE;
@@ -130,9 +134,62 @@ export class CoursesService {
       throw new ConflictException('You are already enrolled in this course');
     }
 
-    return this.prisma.enrollment.create({
-      data: { courseId, userId, paidAt: new Date() },
+    // Formation payante : débite le wallet KFL (rechargé via CinetPay/Stripe/
+    // Mobile Money) avant de créer l'inscription — même logique que les
+    // événements payants (EventsService.register).
+    const enrollment = course.priceXAF > 0
+      ? await this.prisma.$transaction(async (tx) => {
+          const wallet = await tx.wallet.findUnique({ where: { userId } });
+          if (!wallet || wallet.balanceXAF < course.priceXAF) {
+            throw new BadRequestException('Solde du portefeuille insuffisant pour cette formation');
+          }
+          await tx.wallet.update({ where: { userId }, data: { balanceXAF: { decrement: course.priceXAF } } });
+          await tx.transaction.create({
+            data: {
+              walletId: wallet.id,
+              type: TransactionType.debit,
+              amountXAF: course.priceXAF,
+              description: `Formation — ${course.title}`,
+            },
+          });
+          return tx.enrollment.create({ data: { courseId, userId, paidAt: new Date() } });
+        })
+      : await this.prisma.enrollment.create({ data: { courseId, userId, paidAt: new Date() } });
+
+    await this.notifyInstructor(course.instructorId, userId, course.title);
+    await this.notificationsService.create(
+      userId,
+      'course',
+      'Inscription confirmée',
+      `Votre inscription à la formation "${course.title}" est confirmée.`,
+      { courseId: course.id },
+    );
+    return enrollment;
+  }
+
+  // Alimente l'inbox système -> pro (GET /pro/messages).
+  private async notifyInstructor(instructorId: string, studentId: string, courseTitle: string): Promise<void> {
+    const student = await this.prisma.user.findUnique({ where: { id: studentId } });
+    const studentName = student ? `${student.firstName} ${student.lastName}`.trim() : 'Un utilisateur';
+    await this.prisma.proMessage.create({
+      data: {
+        recipientId: instructorId,
+        senderName: studentName,
+        subject: 'Nouvelle inscription à votre formation',
+        body: `${studentName} s'est inscrit(e) à votre formation "${courseTitle}".`,
+      },
     });
+  }
+
+  // Formations créées par ce compte Pro — alimente l'onglet "Offres".
+  public async getManagedByInstructor(instructorId: string): Promise<CourseView[]> {
+    const courses = await this.prisma.course.findMany({
+      where: { instructorId },
+      include: { lessons: true, _count: { select: { enrollments: true } } },
+      orderBy: { createdAt: 'desc' },
+    });
+    const instructorsById = await this.loadInstructors([instructorId]);
+    return courses.map((c) => this.toCourseView(c, instructorsById));
   }
 
   public async getProgress(userId: string, courseId: string): Promise<{ completedLessonIds: string[] }> {

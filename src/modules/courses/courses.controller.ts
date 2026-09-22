@@ -6,6 +6,7 @@ import { Roles } from '../../common/decorators/roles.decorator';
 import { CurrentUser, AuthenticatedUser } from '../../common/decorators/current-user.decorator';
 import { CreateCourseDto } from './dto/create-course.dto';
 import { UpdateCourseDto } from './dto/update-course.dto';
+import { UploadCourseMediaDto } from './dto/upload-course-media.dto';
 import { CourseDetailView, CourseView, CoursesService, MyCourseView } from './courses.service';
 
 interface PaginatedResult<T> {
@@ -81,6 +82,15 @@ export class CoursesController {
     @Param('lessonId') lessonId: string,
   ): Promise<LessonProgress> {
     return this.coursesService.completeLesson(user.id, id, lessonId);
+  }
+
+  @Roles('pro', 'admin')
+  @ApiBearerAuth()
+  @Post('upload-media')
+  @ApiOperation({ summary: 'Upload course/lesson media (cover image, lesson video, document or text image)' })
+  @ApiResponse({ status: 201, description: 'Uploaded media URL' })
+  public async uploadMedia(@Body() dto: UploadCourseMediaDto): Promise<{ url: string }> {
+    return this.coursesService.uploadMedia(dto);
   }
 
   @Roles('pro', 'admin')

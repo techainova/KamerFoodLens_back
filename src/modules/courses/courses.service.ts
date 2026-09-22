@@ -1,9 +1,11 @@
 import { BadRequestException, ConflictException, ForbiddenException, Injectable, NotFoundException } from '@nestjs/common';
-import { Course, CourseLevel, Enrollment, Lesson, LessonProgress, TransactionType, User } from '@prisma/client';
+import { Course, CourseLevel, Enrollment, Lesson, LessonProgress, LessonType, TransactionType, User } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
 import { CreateCourseDto } from './dto/create-course.dto';
 import { UpdateCourseDto } from './dto/update-course.dto';
+import { UploadCourseMediaDto } from './dto/upload-course-media.dto';
 import { NotificationsService } from '../notifications/notifications.service';
+import { S3UploadService } from '../../common/services/s3-upload.service';
 
 interface PaginatedResult<T> {
   items: T[];
@@ -14,7 +16,11 @@ interface PaginatedResult<T> {
 export interface LessonView {
   id: string;
   title: string;
+  type: LessonType;
   videoUrl: string | null;
+  documentUrl: string | null;
+  textContent: string | null;
+  textImageUrl: string | null;
   duration: number | null;
   order: number;
 }
@@ -61,7 +67,17 @@ export class CoursesService {
   public constructor(
     private readonly prisma: PrismaService,
     private readonly notificationsService: NotificationsService,
+    private readonly s3UploadService: S3UploadService,
   ) {}
+
+  public async uploadMedia(dto: UploadCourseMediaDto): Promise<{ url: string }> {
+    const url = await this.s3UploadService.uploadBase64Image(
+      dto.dataBase64,
+      dto.mimeType ?? 'application/octet-stream',
+      'courses',
+    );
+    return { url };
+  }
 
   public async findAll(page: number): Promise<PaginatedResult<CourseView>> {
     const skip = (page - 1) * PAGE_SIZE;
@@ -241,7 +257,11 @@ export class CoursesService {
           ? {
               create: dto.lessons.map((lesson) => ({
                 title: lesson.title,
+                type: lesson.type,
                 videoUrl: lesson.videoUrl,
+                documentUrl: lesson.documentUrl,
+                textContent: lesson.textContent,
+                textImageUrl: lesson.textImageUrl,
                 duration: lesson.duration,
                 order: lesson.order,
                 sectionTitle: lesson.sectionTitle,
@@ -316,7 +336,11 @@ export class CoursesService {
       bySection.get(key)!.push({
         id: lesson.id,
         title: lesson.title,
+        type: lesson.type,
         videoUrl: lesson.videoUrl,
+        documentUrl: lesson.documentUrl,
+        textContent: lesson.textContent,
+        textImageUrl: lesson.textImageUrl,
         duration: lesson.duration,
         order: lesson.order,
       });

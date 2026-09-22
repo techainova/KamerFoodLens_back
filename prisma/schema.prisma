@@ -64,6 +64,12 @@ enum CourseLevel {
   advanced
 }
 
+enum LessonType {
+  video
+  document
+  text
+}
+
 enum LeaderboardPeriod {
   week
   month
@@ -492,11 +498,15 @@ model Course {
 }
 
 model Lesson {
-  id           String   @id @default(uuid())
+  id           String     @id @default(uuid())
   courseId     String
-  course       Course   @relation(fields: [courseId], references: [id], onDelete: Cascade)
+  course       Course     @relation(fields: [courseId], references: [id], onDelete: Cascade)
   title        String
+  type         LessonType @default(video)
   videoUrl     String?
+  documentUrl  String?
+  textContent  String?
+  textImageUrl String?
   duration     Int?
   order        Int
   sectionTitle String?

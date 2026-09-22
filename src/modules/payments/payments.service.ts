@@ -1,6 +1,6 @@
 import { BadGatewayException, BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
-import { Payment, PaymentMethod, PaymentStatus, TransactionType, Wallet } from '@prisma/client';
+import { Payment, PaymentMethod, PaymentStatus, Transaction, TransactionType, Wallet } from '@prisma/client';
 import Stripe from 'stripe';
 import { v4 as uuid } from 'uuid';
 import { PrismaService } from '../../prisma/prisma.service';
@@ -70,8 +70,9 @@ export class PaymentsService {
         : PaymentStatus.failed;
 
     const payment = await this.prisma.payment.findFirst({ where: { externalRef } });
-    if (payment) {
+    if (payment && payment.status === PaymentStatus.pending) {
       const updated = await this.prisma.payment.update({ where: { id: payment.id }, data: { status } });
+      await this.creditWalletIfTopupSucceeded(updated);
       await this.notifyPaymentStatus(updated);
     }
 
@@ -98,7 +99,7 @@ export class PaymentsService {
       const intent = event.data.object as Stripe.PaymentIntent;
       const payment = await this.prisma.payment.findFirst({ where: { externalRef: intent.id } });
 
-      if (payment) {
+      if (payment && payment.status === PaymentStatus.pending) {
         const updated = await this.prisma.payment.update({
           where: { id: payment.id },
           data: {
@@ -106,6 +107,7 @@ export class PaymentsService {
               event.type === 'payment_intent.succeeded' ? PaymentStatus.succeeded : PaymentStatus.failed,
           },
         });
+        await this.creditWalletIfTopupSucceeded(updated);
         await this.notifyPaymentStatus(updated);
       }
     }
@@ -138,20 +140,54 @@ export class PaymentsService {
     return this.initiateCinetPay(payment.id, dto.amount, `TOPUP-${payment.id}`);
   }
 
-  public async getTransactions(userId: string, page: number): Promise<PaginatedResult<Payment>> {
+  // La liste "Transactions" du portefeuille reflète son propre grand livre
+  // (topups, débits tombola/formations/événements) — pas la table Payment, qui
+  // couvre les paiements de commande (souvent hors-portefeuille, via CinetPay/Stripe).
+  public async getTransactions(userId: string, page: number): Promise<PaginatedResult<Transaction>> {
     const skip = (page - 1) * PAGE_SIZE;
+    const wallet = await this.prisma.wallet.findUnique({ where: { userId } });
+    if (!wallet) {
+      return { items: [], total: 0, page };
+    }
 
     const [items, total] = await Promise.all([
-      this.prisma.payment.findMany({
-        where: { userId },
+      this.prisma.transaction.findMany({
+        where: { walletId: wallet.id },
         orderBy: { createdAt: 'desc' },
         skip,
         take: PAGE_SIZE,
       }),
-      this.prisma.payment.count({ where: { userId } }),
+      this.prisma.transaction.count({ where: { walletId: wallet.id } }),
     ]);
 
     return { items, total, page };
+  }
+
+  // Un topup réussi (webhook CinetPay/Stripe) doit créditer le solde — sans ça
+  // le paiement est marqué "réussi" mais l'argent n'apparaît jamais dans le
+  // portefeuille. `payment.orderId` est absent uniquement pour un topup (voir
+  // topup() ci-dessous) : un paiement de commande ne doit jamais créditer le wallet.
+  private async creditWalletIfTopupSucceeded(payment: Payment): Promise<void> {
+    if (payment.status !== PaymentStatus.succeeded || payment.orderId) {
+      return;
+    }
+
+    const wallet = await this.prisma.wallet.findUnique({ where: { userId: payment.userId } });
+    if (!wallet) {
+      return;
+    }
+
+    await this.prisma.$transaction([
+      this.prisma.wallet.update({ where: { userId: payment.userId }, data: { balanceXAF: { increment: payment.amountXAF } } }),
+      this.prisma.transaction.create({
+        data: {
+          walletId: wallet.id,
+          type: TransactionType.credit,
+          amountXAF: payment.amountXAF,
+          description: `Recharge via ${payment.method}`,
+        },
+      }),
+    ]);
   }
 
   private async chargeWallet(

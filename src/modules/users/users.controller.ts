@@ -41,6 +41,13 @@ export class UsersController {
     return this.usersService.updateMe(user.id, dto);
   }
 
+  @Delete('me')
+  @ApiOperation({ summary: 'Deactivate the current user account permanently' })
+  @ApiResponse({ status: 200, description: 'Account deactivated' })
+  public async deleteMe(@CurrentUser() user: AuthenticatedUser): Promise<{ message: string }> {
+    return this.usersService.deleteAccount(user.id);
+  }
+
   @Post('me/avatar')
   @ApiOperation({ summary: 'Upload a new profile photo (base64) and set it as the avatar' })
   @ApiResponse({ status: 201, description: 'Updated user profile with the new avatar URL' })

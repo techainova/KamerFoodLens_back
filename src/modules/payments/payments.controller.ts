@@ -1,7 +1,7 @@
 import { BadRequestException, Body, Controller, Get, Headers, Post, Query, Req, UseGuards } from '@nestjs/common';
 import { ApiBearerAuth, ApiOperation, ApiResponse, ApiTags } from '@nestjs/swagger';
 import { FastifyRequest } from 'fastify';
-import { Payment, Wallet } from '@prisma/client';
+import { Transaction, Wallet } from '@prisma/client';
 import { Public } from '../../common/decorators/public.decorator';
 import { CurrentUser, AuthenticatedUser } from '../../common/decorators/current-user.decorator';
 import { AesDecryptGuard } from '../../common/guards/aes-decrypt.guard';
@@ -84,7 +84,7 @@ export class PaymentsController {
   public async getTransactions(
     @CurrentUser() user: AuthenticatedUser,
     @Query('page') page?: string,
-  ): Promise<PaginatedResult<Payment>> {
+  ): Promise<PaginatedResult<Transaction>> {
     return this.paymentsService.getTransactions(user.id, page ? parseInt(page, 10) : 1);
   }
 }

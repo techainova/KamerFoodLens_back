@@ -12,7 +12,7 @@ import {
   Min,
   ValidateNested,
 } from 'class-validator';
-import { CourseLevel } from '@prisma/client';
+import { CourseLevel, LessonType } from '@prisma/client';
 
 export class CreateLessonDto {
   @ApiProperty({ example: 'Introduction au Ndolé' })
@@ -20,10 +20,30 @@ export class CreateLessonDto {
   @IsNotEmpty()
   public title!: string;
 
+  @ApiPropertyOptional({ enum: LessonType, example: LessonType.video })
+  @IsOptional()
+  @IsEnum(LessonType)
+  public type?: LessonType;
+
   @ApiPropertyOptional({ example: 'https://cdn.kmerfoodlens.com/courses/lesson1.mp4' })
   @IsOptional()
   @IsString()
   public videoUrl?: string;
+
+  @ApiPropertyOptional({ example: 'https://cdn.kmerfoodlens.com/courses/lesson1.pdf' })
+  @IsOptional()
+  @IsString()
+  public documentUrl?: string;
+
+  @ApiPropertyOptional({ example: 'Le Ndolé est un plat traditionnel...' })
+  @IsOptional()
+  @IsString()
+  public textContent?: string;
+
+  @ApiPropertyOptional({ example: 'https://cdn.kmerfoodlens.com/courses/lesson1-illustration.jpg' })
+  @IsOptional()
+  @IsString()
+  public textImageUrl?: string;
 
   @ApiPropertyOptional({ example: 600 })
   @IsOptional()

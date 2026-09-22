@@ -1,9 +1,11 @@
-import { ForbiddenException, Injectable, NotFoundException } from '@nestjs/common';
+import { ForbiddenException, Inject, Injectable, NotFoundException } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
 import { Badge, FavoriteItem, FavoriteType, Notification, NotificationType, User } from '@prisma/client';
 import { Model } from 'mongoose';
+import Redis from 'ioredis';
 import { PrismaService } from '../../prisma/prisma.service';
 import { S3UploadService } from '../../common/services/s3-upload.service';
+import { REDIS_CLIENT } from '../../redis/redis.module';
 import { JournalEntry, JournalEntryDocument } from './schemas/journal-entry.schema';
 import { ScanResult, ScanResultDocument } from '../scan/schemas/scan-result.schema';
 import { Post, PostDocument } from '../community/schemas/post.schema';
@@ -79,7 +81,19 @@ export class UsersService {
     @InjectModel(JournalEntry.name) private readonly journalModel: Model<JournalEntryDocument>,
     @InjectModel(ScanResult.name) private readonly scanResultModel: Model<ScanResultDocument>,
     @InjectModel(Post.name) private readonly postModel: Model<PostDocument>,
+    @Inject(REDIS_CLIENT) private readonly redis: Redis,
   ) {}
+
+  // Désactivation plutôt que suppression en cascade : les commandes/avis de
+  // l'utilisateur restent des enregistrements légitimes pour l'autre partie
+  // (restaurant, organisateur...). isActive=false bloque définitivement la
+  // connexion (voir AuthService.login/refresh), ce qui est le seul effet
+  // observable attendu par l'utilisateur qui "supprime son compte".
+  public async deleteAccount(userId: string): Promise<{ message: string }> {
+    await this.prisma.user.update({ where: { id: userId }, data: { isActive: false } });
+    await this.redis.del(`refresh_token:${userId}`);
+    return { message: 'Account deactivated' };
+  }
 
   public async getMe(userId: string): Promise<UserProfile> {
     const user = await this.prisma.user.findUnique({ where: { id: userId } });

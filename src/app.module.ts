@@ -8,6 +8,7 @@ import { GraphQLModule } from '@nestjs/graphql';
 import { MongooseModule } from '@nestjs/mongoose';
 import { ThrottlerModule } from '@nestjs/throttler';
 
+import { AppController } from './app.controller';
 import { ConfigModule } from './config/config.module';
 import { PrismaModule } from './prisma/prisma.module';
 import { RedisModule } from './redis/redis.module';
@@ -98,6 +99,7 @@ import { NotificationsModule } from './modules/notifications/notifications.modul
     VideosModule,
     NotificationsModule,
   ],
+  controllers: [AppController],
   providers: [
     { provide: APP_FILTER, useClass: HttpExceptionFilter },
     { provide: APP_INTERCEPTOR, useClass: TransformInterceptor },

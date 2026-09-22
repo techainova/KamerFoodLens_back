@@ -1,14 +1,18 @@
-import { Body, Controller, Get, Param, Patch, Post, Query } from '@nestjs/common';
+import { Body, Controller, Delete, Get, Param, Patch, Post, Query } from '@nestjs/common';
 import { ApiBearerAuth, ApiOperation, ApiResponse, ApiTags } from '@nestjs/swagger';
-import { Order, OrderStatus, Payout, Promo, ProMessage, ProRequest } from '@prisma/client';
+import { OrderStatus, Payout, Promo, ProMessage, ProRequest } from '@prisma/client';
 import { Roles } from '../../common/decorators/roles.decorator';
 import { CurrentUser, AuthenticatedUser } from '../../common/decorators/current-user.decorator';
+import { MessageView } from '../messages/messages.service';
 import { UpgradeProDto } from './dto/upgrade-pro.dto';
 import { CreatePromoDto } from './dto/create-promo.dto';
 import { RequestPayoutDto } from './dto/request-payout.dto';
 import { UpdateOrderStatusDto } from './dto/update-order-status.dto';
 import { UpdatePaymentMethodsDto } from './dto/update-payment-methods.dto';
+import { ReplyToMessageDto } from './dto/reply-to-message.dto';
+import { SetMemberBlockedDto } from './dto/set-member-blocked.dto';
 import {
+  CommunityMemberView,
   PaymentMethodBreakdown,
   PaymentMethodsView,
   ProOrderDetailView,
@@ -97,6 +101,49 @@ export class ProController {
   }
 
   @Roles('pro', 'admin')
+  @Post('messages/:id/reply')
+  @ApiOperation({ summary: "Reply to a Pro inbox message via direct messaging (when the sender is identifiable)" })
+  @ApiResponse({ status: 201, description: 'Reply sent' })
+  public async replyToMessage(
+    @CurrentUser() user: AuthenticatedUser,
+    @Param('id') id: string,
+    @Body() dto: ReplyToMessageDto,
+  ): Promise<MessageView> {
+    return this.proService.replyToMessage(user.id, id, dto.text);
+  }
+
+  @Roles('pro', 'admin')
+  @Get('community/members')
+  @ApiOperation({ summary: 'List followers ("community members") of the owned restaurants' })
+  @ApiResponse({ status: 200, description: 'Community members' })
+  public async getCommunityMembers(@CurrentUser() user: AuthenticatedUser): Promise<CommunityMemberView[]> {
+    return this.proService.getCommunityMembers(user.id);
+  }
+
+  @Roles('pro', 'admin')
+  @Patch('community/members/:memberId/block')
+  @ApiOperation({ summary: 'Block or unblock a community member from following the owned restaurants' })
+  @ApiResponse({ status: 200, description: 'Block status updated' })
+  public async setCommunityMemberBlocked(
+    @CurrentUser() user: AuthenticatedUser,
+    @Param('memberId') memberId: string,
+    @Body() dto: SetMemberBlockedDto,
+  ): Promise<{ message: string }> {
+    return this.proService.setCommunityMemberBlocked(user.id, memberId, dto.blocked);
+  }
+
+  @Roles('pro', 'admin')
+  @Delete('community/members/:memberId')
+  @ApiOperation({ summary: 'Remove a community member (unfollow them from the owned restaurants)' })
+  @ApiResponse({ status: 200, description: 'Member removed' })
+  public async removeCommunityMember(
+    @CurrentUser() user: AuthenticatedUser,
+    @Param('memberId') memberId: string,
+  ): Promise<{ message: string }> {
+    return this.proService.removeCommunityMember(user.id, memberId);
+  }
+
+  @Roles('pro', 'admin')
   @Get('promos')
   @ApiOperation({ summary: 'List promos for owned restaurants' })
   @ApiResponse({ status: 200, description: 'Promos list' })
@@ -146,7 +193,7 @@ export class ProController {
     @CurrentUser() user: AuthenticatedUser,
     @Param('id') id: string,
     @Body() dto: UpdateOrderStatusDto,
-  ): Promise<Order> {
+  ): Promise<ProOrderDetailView> {
     return this.proService.updateOrderStatus(user.id, id, dto.status);
   }
 

@@ -1,6 +1,6 @@
 import { Body, Controller, Delete, Get, Param, Patch, Post, Query, UseGuards } from '@nestjs/common';
 import { ApiBearerAuth, ApiOperation, ApiResponse, ApiTags } from '@nestjs/swagger';
-import { Review } from '@prisma/client';
+import { Review, Weekday } from '@prisma/client';
 import { Public } from '../../common/decorators/public.decorator';
 import { Roles } from '../../common/decorators/roles.decorator';
 import { CurrentUser, AuthenticatedUser } from '../../common/decorators/current-user.decorator';
@@ -9,6 +9,7 @@ import { SearchRestaurantsDto } from './dto/search-restaurants.dto';
 import { CreateReviewDto } from './dto/create-review.dto';
 import { CreateMenuItemDto } from './dto/create-menu-item.dto';
 import { UpdateMenuItemDto } from './dto/update-menu-item.dto';
+import { UploadMenuItemImageDto } from './dto/upload-menu-item-image.dto';
 import {
   MenuItemView,
   RestaurantReviewView,
@@ -78,10 +79,10 @@ export class RestaurantsController {
 
   @Public()
   @Get(':id/menu')
-  @ApiOperation({ summary: 'Get restaurant menu items' })
+  @ApiOperation({ summary: "Get restaurant menu items, optionally filtered to a given day of the week" })
   @ApiResponse({ status: 200, description: 'Menu items' })
-  public async getMenu(@Param('id') id: string): Promise<MenuItemView[]> {
-    return this.restaurantsService.getMenu(id);
+  public async getMenu(@Param('id') id: string, @Query('day') day?: Weekday): Promise<MenuItemView[]> {
+    return this.restaurantsService.getMenu(id, day);
   }
 
   @Roles('pro', 'admin')
@@ -95,6 +96,19 @@ export class RestaurantsController {
     @Body() dto: CreateMenuItemDto,
   ): Promise<MenuItemView> {
     return this.restaurantsService.createMenuItem(user.id, id, dto);
+  }
+
+  @Roles('pro', 'admin')
+  @ApiBearerAuth()
+  @Post(':id/menu/image')
+  @ApiOperation({ summary: 'Upload a dish photo for a menu item (base64) and get back its URL' })
+  @ApiResponse({ status: 201, description: 'Uploaded image URL' })
+  public async uploadMenuItemImage(
+    @CurrentUser() user: AuthenticatedUser,
+    @Param('id') id: string,
+    @Body() dto: UploadMenuItemImageDto,
+  ): Promise<{ url: string }> {
+    return this.restaurantsService.uploadMenuItemImage(user.id, id, dto);
   }
 
   @Roles('pro', 'admin')

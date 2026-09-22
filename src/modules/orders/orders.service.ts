@@ -102,6 +102,7 @@ export class OrdersService {
     await this.prisma.proMessage.create({
       data: {
         recipientId: restaurant.ownerId,
+        senderId: customerId,
         senderName: customerName,
         subject: `Nouvelle commande ${ref}`,
         body: `${customerName} vient de passer une commande de ${totalXAF.toLocaleString()} XAF chez ${restaurant.name}.`,

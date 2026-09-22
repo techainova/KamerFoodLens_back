@@ -1,13 +1,15 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
-import { IsDateString, IsInt, IsOptional, IsString, Max, Min } from 'class-validator';
+import { IsDateString, IsInt, IsNotEmpty, IsOptional, IsString, Max, Min } from 'class-validator';
 
 export class CreatePromoDto {
   @ApiProperty({ example: 'restaurant-uuid' })
   @IsString()
+  @IsNotEmpty()
   public restaurantId!: string;
 
   @ApiProperty({ example: '20% de réduction ce weekend' })
   @IsString()
+  @IsNotEmpty()
   public title!: string;
 
   @ApiPropertyOptional({ example: 20, minimum: 1, maximum: 100 })

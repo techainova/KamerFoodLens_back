@@ -1,6 +1,6 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import { Type } from 'class-transformer';
-import { ArrayMaxSize, IsArray, IsEnum, IsOptional, IsString, ValidateNested } from 'class-validator';
+import { ArrayMaxSize, IsArray, IsEnum, IsNotEmpty, IsOptional, IsString, ValidateNested } from 'class-validator';
 
 export enum PostType {
   post = 'post',
@@ -26,6 +26,7 @@ export class CreatePostMediaDto {
 export class CreatePostDto {
   @ApiProperty({ example: 'Ma recette de Ndolé maison !' })
   @IsString()
+  @IsNotEmpty()
   public content!: string;
 
   @ApiPropertyOptional({
@@ -47,5 +48,6 @@ export class CreatePostDto {
 export class CreateCommentDto {
   @ApiProperty({ example: 'Super recette, merci du partage !' })
   @IsString()
+  @IsNotEmpty()
   public text!: string;
 }

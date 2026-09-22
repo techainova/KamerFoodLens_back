@@ -6,6 +6,7 @@ import {
   IsBoolean,
   IsEnum,
   IsInt,
+  IsNotEmpty,
   IsOptional,
   IsString,
   Min,
@@ -16,6 +17,7 @@ import { CourseLevel } from '@prisma/client';
 export class CreateLessonDto {
   @ApiProperty({ example: 'Introduction au Ndolé' })
   @IsString()
+  @IsNotEmpty()
   public title!: string;
 
   @ApiPropertyOptional({ example: 'https://cdn.kmerfoodlens.com/courses/lesson1.mp4' })
@@ -43,6 +45,7 @@ export class CreateLessonDto {
 export class CreateCourseDto {
   @ApiProperty({ example: 'Maîtriser la cuisine camerounaise' })
   @IsString()
+  @IsNotEmpty()
   public title!: string;
 
   @ApiPropertyOptional({ example: 'Un cours complet sur les plats traditionnels camerounais' })

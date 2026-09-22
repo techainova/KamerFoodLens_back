@@ -1,5 +1,6 @@
 import { ApiPropertyOptional } from '@nestjs/swagger';
-import { IsArray, IsBoolean, IsInt, IsOptional, IsString, Min } from 'class-validator';
+import { Weekday } from '@prisma/client';
+import { IsArray, IsBoolean, IsEnum, IsInt, IsOptional, IsString, Min } from 'class-validator';
 
 export class UpdateMenuItemDto {
   @ApiPropertyOptional({ example: 'Ndolé traditionnel' })
@@ -43,4 +44,15 @@ export class UpdateMenuItemDto {
   @IsArray()
   @IsString({ each: true })
   public allergens?: string[];
+
+  @ApiPropertyOptional({
+    enum: Weekday,
+    isArray: true,
+    example: ['saturday', 'sunday'],
+    description: 'Jours où le plat est au menu — vide = tous les jours',
+  })
+  @IsOptional()
+  @IsArray()
+  @IsEnum(Weekday, { each: true })
+  public availableDays?: Weekday[];
 }

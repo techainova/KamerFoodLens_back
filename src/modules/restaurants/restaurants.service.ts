@@ -1,11 +1,13 @@
 import { ConflictException, ForbiddenException, NotFoundException, Injectable } from '@nestjs/common';
-import { MenuItem, Prisma, Restaurant, Review } from '@prisma/client';
+import { MenuItem, Prisma, Restaurant, Review, Weekday } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
 import { SearchRestaurantsDto } from './dto/search-restaurants.dto';
 import { CreateReviewDto } from './dto/create-review.dto';
 import { CreateMenuItemDto } from './dto/create-menu-item.dto';
 import { UpdateMenuItemDto } from './dto/update-menu-item.dto';
+import { UploadMenuItemImageDto } from './dto/upload-menu-item-image.dto';
 import { GamesService } from '../games/games.service';
+import { S3UploadService } from '../../common/services/s3-upload.service';
 
 export interface RestaurantView {
   id: string;
@@ -43,6 +45,7 @@ export interface MenuItemView {
   imageUrl?: string;
   isAvailable: boolean;
   allergens?: string[];
+  availableDays: Weekday[];
 }
 
 export interface RestaurantReviewView {
@@ -67,6 +70,7 @@ export class RestaurantsService {
   public constructor(
     private readonly prisma: PrismaService,
     private readonly gamesService: GamesService,
+    private readonly s3UploadService: S3UploadService,
   ) {}
 
   public async search(dto: SearchRestaurantsDto, currentUserId?: string): Promise<ListResult<RestaurantView>> {
@@ -105,36 +109,42 @@ export class RestaurantsService {
     const existing = await this.prisma.restaurantFollow.findUnique({
       where: { userId_restaurantId: { userId, restaurantId } },
     });
+    if (existing?.isBlocked) {
+      throw new ForbiddenException('You have been blocked by this restaurant');
+    }
     if (existing) {
       throw new ConflictException('You already follow this restaurant');
     }
     await this.prisma.restaurantFollow.create({ data: { userId, restaurantId } });
-    const followersCount = await this.prisma.restaurantFollow.count({ where: { restaurantId } });
+    const followersCount = await this.prisma.restaurantFollow.count({ where: { restaurantId, isBlocked: false } });
     return { followersCount, isFollowing: true };
   }
 
   public async unfollow(userId: string, restaurantId: string): Promise<{ followersCount: number; isFollowing: false }> {
     await this.prisma.restaurantFollow.deleteMany({ where: { userId, restaurantId } });
-    const followersCount = await this.prisma.restaurantFollow.count({ where: { restaurantId } });
+    const followersCount = await this.prisma.restaurantFollow.count({ where: { restaurantId, isBlocked: false } });
     return { followersCount, isFollowing: false };
   }
 
   public async getFollowedRestaurants(userId: string): Promise<RestaurantView[]> {
     const follows = await this.prisma.restaurantFollow.findMany({
-      where: { userId },
+      where: { userId, isBlocked: false },
       include: { restaurant: true },
       orderBy: { createdAt: 'desc' },
     });
     return Promise.all(follows.map((f) => this.toRestaurantView(f.restaurant, undefined, userId)));
   }
 
-  public async getMenu(restaurantId: string): Promise<MenuItemView[]> {
+  public async getMenu(restaurantId: string, day?: Weekday): Promise<MenuItemView[]> {
     await this.ensureExists(restaurantId);
     const items = await this.prisma.menuItem.findMany({
       where: { restaurantId },
       orderBy: { category: 'asc' },
     });
-    return items.map((item) => this.toMenuItemView(item));
+    // Un tableau availableDays vide = disponible tous les jours ; sinon on ne
+    // garde que les plats couvrant explicitement le jour demandé.
+    const filtered = day ? items.filter((item) => item.availableDays.length === 0 || item.availableDays.includes(day)) : items;
+    return filtered.map((item) => this.toMenuItemView(item));
   }
 
   public async createReview(userId: string, restaurantId: string, dto: CreateReviewDto): Promise<Review> {
@@ -159,6 +169,7 @@ export class RestaurantsService {
     await this.prisma.proMessage.create({
       data: {
         recipientId: ownerId,
+        senderId: reviewerId,
         senderName: reviewerName,
         subject: `Nouvel avis ${rating}★`,
         body: `${reviewerName} a laissé un avis ${rating}★ sur ${restaurantName}.`,
@@ -205,10 +216,26 @@ export class RestaurantsService {
         imageUrl: dto.imageUrl,
         isAvailable: dto.isAvailable ?? true,
         allergens: dto.allergens ?? [],
+        availableDays: dto.availableDays ?? [],
       },
     });
 
     return this.toMenuItemView(item);
+  }
+
+  public async uploadMenuItemImage(
+    userId: string,
+    restaurantId: string,
+    dto: UploadMenuItemImageDto,
+  ): Promise<{ url: string }> {
+    await this.ensureOwner(userId, restaurantId);
+
+    const url = await this.s3UploadService.uploadBase64Image(
+      dto.imageBase64,
+      dto.mimeType ?? 'image/jpeg',
+      'menu-items',
+    );
+    return { url };
   }
 
   public async updateMenuItem(
@@ -299,11 +326,12 @@ export class RestaurantsService {
         _avg: { rating: true },
         _count: { rating: true },
       }),
-      this.prisma.restaurantFollow.count({ where: { restaurantId: restaurant.id } }),
+      this.prisma.restaurantFollow.count({ where: { restaurantId: restaurant.id, isBlocked: false } }),
       currentUserId
         ? this.prisma.restaurantFollow.findUnique({ where: { userId_restaurantId: { userId: currentUserId, restaurantId: restaurant.id } } })
         : Promise.resolve(null),
     ]);
+    const isFollowingActively = myFollow !== null && !myFollow.isBlocked;
 
     return {
       id: restaurant.id,
@@ -326,7 +354,7 @@ export class RestaurantsService {
       isVerified: restaurant.isVerified,
       ownerId: restaurant.ownerId,
       followersCount,
-      isFollowing: myFollow !== null,
+      isFollowing: isFollowingActively,
       acceptsDelivery: restaurant.acceptsDelivery,
       acceptsReservations: restaurant.acceptsReservations,
     };
@@ -343,6 +371,7 @@ export class RestaurantsService {
       imageUrl: item.imageUrl ?? undefined,
       isAvailable: item.isAvailable,
       allergens: item.allergens,
+      availableDays: item.availableDays,
     };
   }
 

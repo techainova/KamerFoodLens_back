@@ -174,6 +174,7 @@ export class CoursesService {
     await this.prisma.proMessage.create({
       data: {
         recipientId: instructorId,
+        senderId: studentId,
         senderName: studentName,
         subject: 'Nouvelle inscription à votre formation',
         body: `${studentName} s'est inscrit(e) à votre formation "${courseTitle}".`,

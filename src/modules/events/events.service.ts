@@ -3,8 +3,10 @@ import { Event, Prisma, TransactionType } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
 import { CreateEventDto } from './dto/create-event.dto';
 import { UpdateEventDto } from './dto/update-event.dto';
+import { UploadEventImageDto } from './dto/upload-event-image.dto';
 import { EventsGateway } from './events.gateway';
 import { NotificationsService } from '../notifications/notifications.service';
+import { S3UploadService } from '../../common/services/s3-upload.service';
 
 export interface EventView {
   id: string;
@@ -34,6 +36,16 @@ interface ListResult<T> {
   meta: { page: number; total: number };
 }
 
+export interface AttendeeView {
+  registrationId: string;
+  userId: string;
+  name: string;
+  avatar: string | null;
+  phone: string | null;
+  registeredAt: Date;
+  checkedInAt: Date | null;
+}
+
 type EventWithOrganizer = Event & {
   organizer: { firstName: string; lastName: string; proProfile: { businessName: string } | null };
   _count: { registrations: number };
@@ -52,7 +64,17 @@ export class EventsService {
     private readonly prisma: PrismaService,
     private readonly eventsGateway: EventsGateway,
     private readonly notificationsService: NotificationsService,
+    private readonly s3UploadService: S3UploadService,
   ) {}
+
+  public async uploadImage(dto: UploadEventImageDto): Promise<{ url: string }> {
+    const url = await this.s3UploadService.uploadBase64Image(
+      dto.imageBase64,
+      dto.mimeType ?? 'image/jpeg',
+      'events',
+    );
+    return { url };
+  }
 
   public async findAll(category: string | undefined, page: number): Promise<ListResult<EventView>> {
     const skip = (page - 1) * PAGE_SIZE;
@@ -172,6 +194,7 @@ export class EventsService {
     await this.prisma.proMessage.create({
       data: {
         recipientId: organizerId,
+        senderId: attendeeId,
         senderName: attendeeName,
         subject: 'Nouvelle inscription à votre événement',
         body: `${attendeeName} s'est inscrit(e) à votre événement "${eventTitle}".`,
@@ -300,6 +323,81 @@ export class EventsService {
       select: { userId: true },
     });
     return registrations.map((registration) => registration.userId);
+  }
+
+  private async ensureOrganizerOwnsEvent(organizerId: string, eventId: string): Promise<Event> {
+    const event = await this.prisma.event.findUnique({ where: { id: eventId } });
+    if (!event) {
+      throw new NotFoundException('Event not found');
+    }
+    if (event.organizerId !== organizerId) {
+      throw new ForbiddenException('You do not own this event');
+    }
+    return event;
+  }
+
+  public async getAttendees(organizerId: string, eventId: string): Promise<AttendeeView[]> {
+    await this.ensureOrganizerOwnsEvent(organizerId, eventId);
+
+    const registrations = await this.prisma.eventRegistration.findMany({
+      where: { eventId },
+      include: { user: { select: { firstName: true, lastName: true, avatar: true, phone: true } } },
+      orderBy: { createdAt: 'asc' },
+    });
+
+    return registrations.map((registration) => ({
+      registrationId: registration.id,
+      userId: registration.userId,
+      name: `${registration.user.firstName} ${registration.user.lastName}`.trim(),
+      avatar: registration.user.avatar,
+      phone: registration.user.phone,
+      registeredAt: registration.createdAt,
+      checkedInAt: registration.checkedInAt,
+    }));
+  }
+
+  public async notifyAttendees(
+    organizerId: string,
+    eventId: string,
+    title: string,
+    body: string,
+  ): Promise<{ notified: number }> {
+    const event = await this.ensureOrganizerOwnsEvent(organizerId, eventId);
+    const registrantIds = await this.getRegistrantIds(eventId);
+
+    await this.notificationsService.createForMany(registrantIds, 'event', title, body, {
+      eventId: event.id,
+    });
+
+    return { notified: registrantIds.length };
+  }
+
+  public async checkInAttendee(
+    organizerId: string,
+    eventId: string,
+    registrationId: string,
+  ): Promise<{ alreadyCheckedIn: boolean; attendeeName: string; checkedInAt: Date }> {
+    await this.ensureOrganizerOwnsEvent(organizerId, eventId);
+
+    const registration = await this.prisma.eventRegistration.findUnique({
+      where: { id: registrationId },
+      include: { user: { select: { firstName: true, lastName: true } } },
+    });
+    if (!registration || registration.eventId !== eventId) {
+      throw new NotFoundException('Registration not found for this event');
+    }
+
+    const attendeeName = `${registration.user.firstName} ${registration.user.lastName}`.trim();
+    if (registration.checkedInAt) {
+      return { alreadyCheckedIn: true, attendeeName, checkedInAt: registration.checkedInAt };
+    }
+
+    const updated = await this.prisma.eventRegistration.update({
+      where: { id: registrationId },
+      data: { checkedInAt: new Date() },
+    });
+
+    return { alreadyCheckedIn: false, attendeeName, checkedInAt: updated.checkedInAt! };
   }
 
   private toEventView(event: EventWithOrganizer): EventView {

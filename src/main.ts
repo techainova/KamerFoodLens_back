@@ -10,7 +10,14 @@ import { AppModule } from './app.module';
 import { PrismaService } from './prisma/prisma.service';
 
 async function bootstrap(): Promise<void> {
-  const app = await NestFactory.create<NestFastifyApplication>(AppModule, new FastifyAdapter(), {
+  // Fastify's default bodyLimit is 1 MiB — far too small once a request carries
+  // base64-encoded media (avatar photos, menu item photos, post/story carousels
+  // of up to 10 images). Base64 alone inflates raw bytes by ~33%, so even a
+  // single normal camera photo routinely exceeds the default and gets rejected
+  // with a silent 413 before it reaches any route handler.
+  const app = await NestFactory.create<NestFastifyApplication>(AppModule, new FastifyAdapter({
+    bodyLimit: 50 * 1024 * 1024,
+  }), {
     rawBody: true,
   });
 

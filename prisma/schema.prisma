@@ -107,6 +107,16 @@ enum RecipeDifficulty {
   hard
 }
 
+enum Weekday {
+  monday
+  tuesday
+  wednesday
+  thursday
+  friday
+  saturday
+  sunday
+}
+
 // ─────────────────────────────────────────────────────────────
 // USER / AUTH
 // ─────────────────────────────────────────────────────────────
@@ -153,6 +163,7 @@ model User {
   favorites           FavoriteItem[]
   notifications       Notification[]
   proMessages         ProMessage[]      @relation("ProMessageRecipient")
+  proMessagesSent     ProMessage[]      @relation("ProMessageSender")
   payoutsRequested    Payout[]
   deviceTokens        DeviceToken[]
   conversationsAsA    Conversation[]    @relation("ConversationUserA")
@@ -262,6 +273,7 @@ model RestaurantFollow {
   user         User       @relation(fields: [userId], references: [id], onDelete: Cascade)
   restaurantId String
   restaurant   Restaurant @relation(fields: [restaurantId], references: [id], onDelete: Cascade)
+  isBlocked    Boolean    @default(false)
   createdAt    DateTime   @default(now())
 
   @@unique([userId, restaurantId])
@@ -281,6 +293,10 @@ model MenuItem {
   imageUrl     String?
   isAvailable  Boolean    @default(true)
   allergens    String[]
+  // Tableau vide = disponible tous les jours (comportement historique, rétrocompatible) ;
+  // sinon, la liste des jours où le plat est au menu — un même plat peut couvrir
+  // plusieurs jours (ex. menu du week-end = [saturday, sunday]).
+  availableDays Weekday[] @default([])
   createdAt    DateTime   @default(now())
   updatedAt    DateTime   @updatedAt
 
@@ -440,12 +456,13 @@ model Event {
 }
 
 model EventRegistration {
-  id        String   @id @default(uuid())
-  eventId   String
-  event     Event    @relation(fields: [eventId], references: [id], onDelete: Cascade)
-  userId    String
-  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
-  createdAt DateTime @default(now())
+  id          String    @id @default(uuid())
+  eventId     String
+  event       Event     @relation(fields: [eventId], references: [id], onDelete: Cascade)
+  userId      String
+  user        User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  checkedInAt DateTime?
+  createdAt   DateTime  @default(now())
 
   @@unique([eventId, userId])
   @@map("event_registrations")
@@ -704,6 +721,11 @@ model ProMessage {
   id          String   @id @default(uuid())
   recipientId String
   recipient   User     @relation("ProMessageRecipient", fields: [recipientId], references: [id], onDelete: Cascade)
+  // Nullable : les diffusions purement système (aucun expéditeur identifiable) n'ont pas
+  // de senderId, mais les messages liés à une action utilisateur (nouvelle commande, avis,
+  // inscription) en ont un — ce qui permet au Pro de répondre directement depuis l'inbox.
+  senderId    String?
+  sender      User?    @relation("ProMessageSender", fields: [senderId], references: [id], onDelete: SetNull)
   senderName  String
   subject     String
   body        String

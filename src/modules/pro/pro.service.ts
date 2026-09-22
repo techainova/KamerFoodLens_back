@@ -1,10 +1,20 @@
 import { BadRequestException, ForbiddenException, Injectable, NotFoundException } from '@nestjs/common';
-import { Order, OrderStatus, Payout, Promo, ProMessage, ProRequest } from '@prisma/client';
+import { OrderStatus, Payout, Promo, ProMessage, ProRequest } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
 import { OrdersService } from '../orders/orders.service';
+import { MessagesService, MessageView } from '../messages/messages.service';
 import { UpgradeProDto } from './dto/upgrade-pro.dto';
 import { CreatePromoDto } from './dto/create-promo.dto';
 import { UpdatePaymentMethodsDto } from './dto/update-payment-methods.dto';
+
+export interface CommunityMemberView {
+  userId: string;
+  name: string;
+  avatar: string | null;
+  isActive: boolean;
+  isBlocked: boolean;
+  followedAt: Date;
+}
 
 export interface PaymentMethodsView {
   acceptsMtn: boolean;
@@ -70,6 +80,7 @@ export class ProService {
   public constructor(
     private readonly prisma: PrismaService,
     private readonly ordersService: OrdersService,
+    private readonly messagesService: MessagesService,
   ) {}
 
   public async getDashboard(userId: string): Promise<ProStats> {
@@ -271,6 +282,22 @@ export class ProService {
     return { items, total, page };
   }
 
+  // Route la réponse vers la messagerie directe existante (Conversation/Message) —
+  // seuls les messages liés à une action utilisateur identifiable (senderId renseigné)
+  // peuvent recevoir une réponse ; une diffusion système pure n'a personne à qui répondre.
+  public async replyToMessage(userId: string, messageId: string, text: string): Promise<MessageView> {
+    const message = await this.prisma.proMessage.findUnique({ where: { id: messageId } });
+    if (!message || message.recipientId !== userId) {
+      throw new NotFoundException('Message not found');
+    }
+    if (!message.senderId) {
+      throw new BadRequestException('This message has no identifiable sender to reply to');
+    }
+
+    const conversation = await this.messagesService.getOrCreateConversation(userId, message.senderId);
+    return this.messagesService.sendMessage(userId, conversation.id, { text });
+  }
+
   public async getPromos(userId: string): Promise<Promo[]> {
     const restaurantIds = await this.getOwnedRestaurantIds(userId);
     return this.prisma.promo.findMany({
@@ -359,7 +386,7 @@ export class ProService {
     };
   }
 
-  public async updateOrderStatus(userId: string, orderId: string, status: OrderStatus): Promise<Order> {
+  public async updateOrderStatus(userId: string, orderId: string, status: OrderStatus): Promise<ProOrderDetailView> {
     const restaurantIds = await this.getOwnedRestaurantIds(userId);
     const order = await this.prisma.order.findUnique({ where: { id: orderId } });
 
@@ -367,7 +394,9 @@ export class ProService {
       throw new NotFoundException('Order not found');
     }
 
-    return this.ordersService.updateStatus(orderId, status);
+    await this.ordersService.updateStatus(orderId, status);
+
+    return this.getOrderDetail(userId, orderId);
   }
 
   public async getPayouts(userId: string): Promise<Payout[]> {
@@ -378,7 +407,18 @@ export class ProService {
     userId: string,
   ): Promise<{ plan: string; status: string; proProfile: unknown }> {
     const proProfile = await this.prisma.proProfile.findUnique({ where: { userId } });
-    return { plan: 'pro_standard', status: proProfile ? 'active' : 'inactive', proProfile };
+    if (!proProfile) {
+      return { plan: 'pro_standard', status: 'inactive', proProfile: null };
+    }
+
+    const restaurantIds = await this.getOwnedRestaurantIds(userId);
+    const stats = await this.computeLifetimeStats(restaurantIds);
+
+    return {
+      plan: 'pro_standard',
+      status: 'active',
+      proProfile: { businessName: proProfile.businessName, ...stats },
+    };
   }
 
   public async getPaymentMethods(userId: string): Promise<PaymentMethodsView> {
@@ -421,11 +461,120 @@ export class ProService {
       throw new ForbiddenException('You do not have a Pro profile');
     }
 
-    if (amountXAF > proProfile.totalRevenueXAF) {
-      throw new BadRequestException('Requested payout exceeds total revenue');
+    const restaurantIds = await this.getOwnedRestaurantIds(userId);
+    const { totalRevenueXAF } = await this.computeLifetimeStats(restaurantIds);
+    const alreadyRequested = await this.prisma.payout.aggregate({
+      where: { userId, status: { in: ['pending', 'approved', 'paid'] } },
+      _sum: { amountXAF: true },
+    });
+    const availableXAF = totalRevenueXAF - (alreadyRequested._sum.amountXAF ?? 0);
+
+    if (amountXAF > availableXAF) {
+      throw new BadRequestException(
+        `Requested payout exceeds available balance (${availableXAF} XAF available)`,
+      );
     }
 
     return this.prisma.payout.create({ data: { userId, amountXAF, method, phone } });
+  }
+
+  // Calculé à la volée depuis les commandes terminées plutôt que stocké sur ProProfile —
+  // évite tout risque de compteur qui se dé-synchronise faute d'un point d'écriture oublié.
+  private async computeLifetimeStats(
+    restaurantIds: string[],
+  ): Promise<{ totalOrders: number; totalRevenueXAF: number; rating: number }> {
+    if (restaurantIds.length === 0) {
+      return { totalOrders: 0, totalRevenueXAF: 0, rating: 0 };
+    }
+
+    const [orders, reviews] = await Promise.all([
+      this.prisma.order.findMany({
+        where: { restaurantId: { in: restaurantIds }, status: OrderStatus.completed },
+        select: { totalXAF: true, kflFeeXAF: true },
+      }),
+      this.prisma.review.findMany({
+        where: { restaurantId: { in: restaurantIds } },
+        select: { rating: true },
+      }),
+    ]);
+
+    const totalRevenueXAF = orders.reduce((sum, order) => sum + (order.totalXAF - order.kflFeeXAF), 0);
+    const rating =
+      reviews.length === 0 ? 0 : reviews.reduce((sum, review) => sum + review.rating, 0) / reviews.length;
+
+    return { totalOrders: orders.length, totalRevenueXAF, rating: Math.round(rating * 10) / 10 };
+  }
+
+  // Un follower peut suivre plusieurs restaurants du même Pro : on regroupe par
+  // userId pour n'afficher qu'une seule ligne, avec la date de suivi la plus ancienne
+  // et bloqué=true si bloqué sur au moins un des restaurants concernés.
+  public async getCommunityMembers(userId: string): Promise<CommunityMemberView[]> {
+    const restaurantIds = await this.getOwnedRestaurantIds(userId);
+    if (restaurantIds.length === 0) {
+      return [];
+    }
+
+    const follows = await this.prisma.restaurantFollow.findMany({
+      where: { restaurantId: { in: restaurantIds } },
+      include: { user: true },
+      orderBy: { createdAt: 'asc' },
+    });
+
+    const byUser = new Map<string, CommunityMemberView>();
+    for (const follow of follows) {
+      const existing = byUser.get(follow.userId);
+      if (existing) {
+        existing.isBlocked = existing.isBlocked || follow.isBlocked;
+        continue;
+      }
+      byUser.set(follow.userId, {
+        userId: follow.userId,
+        name: `${follow.user.firstName} ${follow.user.lastName}`.trim(),
+        avatar: follow.user.avatar,
+        isActive: follow.user.isActive && !follow.user.isBanned,
+        isBlocked: follow.isBlocked,
+        followedAt: follow.createdAt,
+      });
+    }
+
+    return [...byUser.values()];
+  }
+
+  public async setCommunityMemberBlocked(
+    userId: string,
+    memberId: string,
+    blocked: boolean,
+  ): Promise<{ message: string }> {
+    const restaurantIds = await this.getOwnedRestaurantIds(userId);
+    if (restaurantIds.length === 0) {
+      throw new NotFoundException('Member not found');
+    }
+
+    const result = await this.prisma.restaurantFollow.updateMany({
+      where: { restaurantId: { in: restaurantIds }, userId: memberId },
+      data: { isBlocked: blocked },
+    });
+    if (result.count === 0) {
+      throw new NotFoundException('Member not found');
+    }
+
+    return { message: blocked ? 'Member blocked' : 'Member unblocked' };
+  }
+
+  public async removeCommunityMember(userId: string, memberId: string): Promise<{ message: string }> {
+    const restaurantIds = await this.getOwnedRestaurantIds(userId);
+    if (restaurantIds.length === 0) {
+      throw new NotFoundException('Member not found');
+    }
+
+    const result = await this.prisma.restaurantFollow.deleteMany({
+      where: { restaurantId: { in: restaurantIds }, userId: memberId },
+    });
+    if (result.count === 0) {
+      throw new NotFoundException('Member not found');
+    }
+
+    return { message: 'Member removed' };
   }
 
   private async getOwnedRestaurantIds(userId: string): Promise<string[]> {

@@ -6,7 +6,9 @@ import { Roles } from '../../common/decorators/roles.decorator';
 import { CurrentUser, AuthenticatedUser } from '../../common/decorators/current-user.decorator';
 import { CreateEventDto } from './dto/create-event.dto';
 import { UpdateEventDto } from './dto/update-event.dto';
-import { EventsService, EventView } from './events.service';
+import { NotifyAttendeesDto } from './dto/notify-attendees.dto';
+import { UploadEventImageDto } from './dto/upload-event-image.dto';
+import { AttendeeView, EventsService, EventView } from './events.service';
 
 interface ListResult<T> {
   data: T[];
@@ -78,6 +80,15 @@ export class EventsController {
 
   @Roles('pro', 'admin')
   @ApiBearerAuth()
+  @Post('upload-image')
+  @ApiOperation({ summary: 'Upload an event cover photo (base64) and get back its URL' })
+  @ApiResponse({ status: 201, description: 'Uploaded image URL' })
+  public async uploadImage(@Body() dto: UploadEventImageDto): Promise<{ url: string }> {
+    return this.eventsService.uploadImage(dto);
+  }
+
+  @Roles('pro', 'admin')
+  @ApiBearerAuth()
   @Post()
   @ApiOperation({ summary: 'Create an event (Pro only)' })
   @ApiResponse({ status: 201, description: 'Event created' })
@@ -108,5 +119,43 @@ export class EventsController {
     @Param('id') id: string,
   ): Promise<{ message: string }> {
     return this.eventsService.remove(user.id, id);
+  }
+
+  @Roles('pro', 'admin')
+  @ApiBearerAuth()
+  @Get(':id/attendees')
+  @ApiOperation({ summary: 'List attendees registered for an owned event (Pro only)' })
+  @ApiResponse({ status: 200, description: 'Attendee list' })
+  public async getAttendees(
+    @CurrentUser() user: AuthenticatedUser,
+    @Param('id') id: string,
+  ): Promise<AttendeeView[]> {
+    return this.eventsService.getAttendees(user.id, id);
+  }
+
+  @Roles('pro', 'admin')
+  @ApiBearerAuth()
+  @Post(':id/notify')
+  @ApiOperation({ summary: 'Send a notification to every attendee of an owned event (Pro only)' })
+  @ApiResponse({ status: 201, description: 'Notification sent to attendees' })
+  public async notifyAttendees(
+    @CurrentUser() user: AuthenticatedUser,
+    @Param('id') id: string,
+    @Body() dto: NotifyAttendeesDto,
+  ): Promise<{ notified: number }> {
+    return this.eventsService.notifyAttendees(user.id, id, dto.title, dto.body);
+  }
+
+  @Roles('pro', 'admin')
+  @ApiBearerAuth()
+  @Post(':id/checkin/:registrationId')
+  @ApiOperation({ summary: "Check in an attendee at the event entrance, e.g. via QR scan (Pro only)" })
+  @ApiResponse({ status: 201, description: 'Attendee checked in' })
+  public async checkInAttendee(
+    @CurrentUser() user: AuthenticatedUser,
+    @Param('id') id: string,
+    @Param('registrationId') registrationId: string,
+  ): Promise<{ alreadyCheckedIn: boolean; attendeeName: string; checkedInAt: Date }> {
+    return this.eventsService.checkInAttendee(user.id, id, registrationId);
   }
 }

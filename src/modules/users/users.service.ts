@@ -1,6 +1,6 @@
 import { ForbiddenException, Inject, Injectable, NotFoundException } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
-import { Badge, FavoriteItem, FavoriteType, Notification, NotificationType, User } from '@prisma/client';
+import { Badge, FavoriteItem, FavoriteType, Notification, NotificationType, Prisma, User } from '@prisma/client';
 import { Model } from 'mongoose';
 import Redis from 'ioredis';
 import { PrismaService } from '../../prisma/prisma.service';
@@ -71,6 +71,14 @@ export interface MyReviewView {
   createdAt: string;
 }
 
+export interface UserSearchResult {
+  id: string;
+  name: string;
+  username: string | null;
+  avatar: string | null;
+  role: string;
+}
+
 const PAGE_SIZE = 20;
 
 @Injectable()
@@ -93,6 +101,38 @@ export class UsersService {
     await this.prisma.user.update({ where: { id: userId }, data: { isActive: false } });
     await this.redis.del(`refresh_token:${userId}`);
     return { message: 'Account deactivated' };
+  }
+
+  // Alimente "nouvelle conversation" côté messagerie — chercher un destinataire
+  // par nom/pseudo avant d'ouvrir un fil (POST /messages/conversations).
+  public async searchUsers(currentUserId: string, query: string): Promise<UserSearchResult[]> {
+    const trimmed = query.trim();
+    if (trimmed.length < 2) {
+      return [];
+    }
+
+    const users = await this.prisma.user.findMany({
+      where: {
+        id: { not: currentUserId },
+        isActive: true,
+        isBanned: false,
+        OR: [
+          { firstName: { contains: trimmed, mode: Prisma.QueryMode.insensitive } },
+          { lastName: { contains: trimmed, mode: Prisma.QueryMode.insensitive } },
+          { username: { contains: trimmed, mode: Prisma.QueryMode.insensitive } },
+        ],
+      },
+      take: 20,
+      orderBy: { firstName: 'asc' },
+    });
+
+    return users.map((u) => ({
+      id: u.id,
+      name: `${u.firstName} ${u.lastName}`.trim(),
+      username: u.username,
+      avatar: u.avatar,
+      role: u.role,
+    }));
   }
 
   public async getMe(userId: string): Promise<UserProfile> {

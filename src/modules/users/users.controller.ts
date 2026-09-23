@@ -14,6 +14,7 @@ import {
   MyReviewView,
   PaginatedResult,
   UserProfile,
+  UserSearchResult,
   UserStats,
   UsersService,
 } from './users.service';
@@ -29,6 +30,16 @@ export class UsersController {
   @ApiResponse({ status: 200, description: 'Current user profile' })
   public async getMe(@CurrentUser() user: AuthenticatedUser): Promise<UserProfile> {
     return this.usersService.getMe(user.id);
+  }
+
+  @Get('search')
+  @ApiOperation({ summary: 'Search users by name or username (to start a new conversation)' })
+  @ApiResponse({ status: 200, description: 'Matching users' })
+  public async searchUsers(
+    @CurrentUser() user: AuthenticatedUser,
+    @Query('q') q: string,
+  ): Promise<UserSearchResult[]> {
+    return this.usersService.searchUsers(user.id, q ?? '');
   }
 
   @Patch('me')

@@ -74,7 +74,9 @@ export class S3UploadService implements OnModuleInit {
 
   public async uploadBase64Image(base64Data: string, mimeType: string, folder: string): Promise<string> {
     const buffer = Buffer.from(base64Data.replace(/^data:.*;base64,/, ''), 'base64');
-    const extension = mimeType.split('/')[1] ?? 'jpg';
+    // "image/svg+xml" etc. carry a structured-syntax suffix after '+' that
+    // isn't part of the file extension — strip it so keys end in ".svg", not ".svg+xml".
+    const extension = (mimeType.split('/')[1] ?? 'jpg').split('+')[0];
     const key = `${folder}/${uuid()}.${extension}`;
 
     await this.client.send(

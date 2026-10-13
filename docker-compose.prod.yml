@@ -8,6 +8,10 @@
 #     (needs outbound internet for Stripe/CinetPay/SMTP/Google) both sit here too.
 #   - api is attached to BOTH networks: reachable from nginx, and able to reach the
 #     databases — but never directly reachable from the internet itself.
+#   - garage is ALSO attached to both, same reasoning as api: it needs kfl_internal
+#     to be written to by api, but nginx also needs to reach its website port
+#     directly to serve public image reads (see nginx/nginx.conf's /media/ location)
+#     — Postgres/Mongo/Redis have no such public-read use case and stay internal-only.
 #
 # This file is copied to the VPS once during initial setup (see scripts/vps-setup.sh)
 # and is NOT what changes on every deploy — GitHub Actions only ever updates the
@@ -60,7 +64,7 @@ services:
       - ./garage.toml:/etc/garage.toml:ro
       - kfl_garage_meta:/data/meta
       - kfl_garage_data:/data/data
-    networks: [kfl_internal]
+    networks: [kfl_internal, kfl_public]
 
   # Placeholder — this image comes from the AI service's OWN repo/Dockerfile, which
   # isn't part of this backend project. Build and push it the same way as `api`

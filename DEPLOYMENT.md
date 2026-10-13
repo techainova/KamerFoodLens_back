@@ -13,8 +13,11 @@ kfl_back (push sur main)
 ```
 
 Sur le VPS, un seul `docker compose` (docker-compose.prod.yml) fait tourner :
-nginx (proxy public, 80/443) → api (Nest) → postgres / mongodb / redis / minio /
+nginx (proxy public, 80/443) → api (Nest) → postgres / mongodb / redis / garage /
 ai-service, ces cinq derniers sans port publié (réseau Docker interne uniquement).
+Garage (stockage objet compatible S3) remplace MinIO : son image Docker n'est plus
+distribuée gratuitement depuis 2025. nginx expose `/media/` en reverse-proxy vers le
+port "website" de Garage, seul moyen d'y servir des fichiers sans authentification.
 
 ## Ce qu'il reste à fournir
 
@@ -37,7 +40,7 @@ ai-service, ces cinq derniers sans port publié (réseau Docker interne uniqueme
 Le code de ce service n'est pas dans ce repo — il a son propre Dockerfile/repo à construire et pousser sur DockerHub de la même façon que le backend. Une fois son image disponible, renseigne `AI_SERVICE_IMAGE=ton-compte/kfl-ai:latest` dans le `.env` du VPS. En attendant, laisse `ai-service` commenté dans `docker-compose.prod.yml` — le module scan répond juste par une erreur propre (502) sans lui, il n'empêche pas le reste de fonctionner.
 
 ### 4. Toutes les valeurs de production dans `.env` (sur le VPS, jamais dans Git)
-Mots de passe DB/Redis/MinIO réels (pas les valeurs de `.env.example`), clés JWT RS256 de prod (`openssl genrsa`/`openssl rsa -pubout`), `ENCRYPTION_KEY` de prod, clés Stripe/CinetPay/SMTP/Google réelles, et `ALLOWED_ORIGINS` pointant vers le vrai domaine de l'app. `scripts/vps-setup.sh` génère un gabarit à remplir directement sur place.
+Mots de passe DB/Redis réels (pas les valeurs de `.env.example`), clés JWT RS256 de prod (`openssl genrsa`/`openssl rsa -pubout`), `ENCRYPTION_KEY` de prod, clés Stripe/CinetPay/SMTP/Google réelles, et `ALLOWED_ORIGINS` pointant vers le vrai domaine de l'app. `scripts/vps-setup.sh` génère un gabarit à remplir directement sur place.
 
 ### 5. (Optionnel mais recommandé) Un nom de domaine
 Sans domaine, l'app reste joignable en HTTP par l'IP du VPS. Avec un domaine pointé sur l'IP (simple enregistrement A), on peut activer HTTPS via Let's Encrypt/certbot — voir la section plus bas.

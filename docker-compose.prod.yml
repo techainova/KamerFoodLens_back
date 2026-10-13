@@ -44,16 +44,22 @@ services:
       - kfl_redis_data:/data
     networks: [kfl_internal]
 
-  minio:
-    image: minio/minio:latest
-    container_name: kfl-minio
+  # S3-compatible object store for avatars/menu photos/scan images. MinIO's image was
+  # removed from free public Docker Hub distribution in 2025, so this uses Garage
+  # (https://garagehq.deuxfleurs.fr) instead — same role, same S3 API surface from the
+  # app's point of view (AWS_ENDPOINT/AWS_ACCESS_KEY_ID/AWS_SECRET_ACCESS_KEY).
+  # One-time bootstrap after first `up` (see DEPLOYMENT.md): assign this node a layout,
+  # create the bucket, create a key, grant it read/write, and enable bucket website
+  # access (Garage only serves anonymous/unsigned reads through the website port, which
+  # is why nginx proxies /media/ to it — see nginx/nginx.conf and AWS_PUBLIC_URL).
+  garage:
+    image: dxflrs/garage:v2.4.1
+    container_name: kfl-garage
     restart: unless-stopped
-    environment:
-      MINIO_ROOT_USER: ${MINIO_ROOT_USER}
-      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD}
-    command: server /data --console-address ":9001"
     volumes:
-      - kfl_minio_data:/data
+      - ./garage.toml:/etc/garage.toml:ro
+      - kfl_garage_meta:/data/meta
+      - kfl_garage_data:/data/data
     networks: [kfl_internal]
 
   # Placeholder — this image comes from the AI service's OWN repo/Dockerfile, which
@@ -77,7 +83,7 @@ services:
       - postgres
       - mongodb
       - redis
-      - minio
+      - garage
     networks: [kfl_internal, kfl_public]
 
   nginx:
@@ -103,4 +109,5 @@ volumes:
   kfl_postgres_data:
   kfl_mongo_data:
   kfl_redis_data:
-  kfl_minio_data:
+  kfl_garage_meta:
+  kfl_garage_data:

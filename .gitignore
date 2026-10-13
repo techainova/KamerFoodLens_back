@@ -2,6 +2,7 @@ node_modules/
 dist/
 coverage/
 .env
+garage.toml
 *.log
 .DS_Store
 src/schema.gql

@@ -27,6 +27,13 @@ read -rp "Branch [main]: " BRANCH
 BRANCH="${BRANCH:-main}"
 curl -fsSL "https://raw.githubusercontent.com/${REPO}/${BRANCH}/docker-compose.prod.yml" -o docker-compose.prod.yml
 curl -fsSL "https://raw.githubusercontent.com/${REPO}/${BRANCH}/nginx/nginx.conf" -o nginx/nginx.conf
+curl -fsSL "https://raw.githubusercontent.com/${REPO}/${BRANCH}/garage.toml.example" -o garage.toml
+
+if grep -q '__RPC_SECRET__' garage.toml 2>/dev/null; then
+  echo "==> Generating Garage cluster secrets"
+  sed -i "s/__RPC_SECRET__/$(openssl rand -hex 32)/" garage.toml
+  sed -i "s/__ADMIN_TOKEN__/$(openssl rand -base64 24)/" garage.toml
+fi
 
 if [ ! -f .env ]; then
   echo "==> No .env found — creating one now. Paste real production values, not the .env.example placeholders."
@@ -71,13 +78,12 @@ CINETPAY_SITE_ID=CHANGE_ME
 STRIPE_SECRET_KEY=CHANGE_ME
 STRIPE_WEBHOOK_SECRET=CHANGE_ME
 
-MINIO_ROOT_USER=CHANGE_ME
-MINIO_ROOT_PASSWORD=CHANGE_ME
-AWS_ENDPOINT=http://minio:9000
-AWS_ACCESS_KEY_ID=CHANGE_ME
-AWS_SECRET_ACCESS_KEY=CHANGE_ME
+AWS_ENDPOINT=http://garage:3900
+AWS_PUBLIC_URL=http://CHANGE_ME_TO_SERVER_IP_OR_DOMAIN/media
+AWS_ACCESS_KEY_ID=CHANGE_ME_AFTER_GARAGE_BOOTSTRAP
+AWS_SECRET_ACCESS_KEY=CHANGE_ME_AFTER_GARAGE_BOOTSTRAP
 AWS_S3_BUCKET=kfl-media
-AWS_REGION=eu-west-3
+AWS_REGION=garage
 
 ALLOWED_ORIGINS=https://app.kmerfooodlens.com
 
@@ -101,8 +107,22 @@ fi
 echo "==> Logging into DockerHub (needed once so 'docker compose pull' works for a private image)"
 docker login
 
-echo "==> Pulling images and starting the stack"
-docker compose -f docker-compose.prod.yml --env-file .env up -d
+echo "==> Pulling images and starting the stack (ai-service is a placeholder until its own"
+echo "    image exists — see the comment above its block in docker-compose.prod.yml)"
+docker compose -f docker-compose.prod.yml --env-file .env up -d postgres mongodb redis garage api nginx
+
+echo "==> Bootstrapping the Garage object store (one-time: layout, bucket, access key)"
+NODE_ID=$(docker compose -f docker-compose.prod.yml exec -T garage /garage node id -q | cut -d'@' -f1)
+docker compose -f docker-compose.prod.yml exec -T garage /garage layout assign -z dc1 -c 1G "$NODE_ID"
+docker compose -f docker-compose.prod.yml exec -T garage /garage layout apply --version 1
+docker compose -f docker-compose.prod.yml exec -T garage /garage bucket create kfl-media
+docker compose -f docker-compose.prod.yml exec -T garage /garage key create kfl-app-key
+docker compose -f docker-compose.prod.yml exec -T garage /garage bucket allow --read --write kfl-media --key kfl-app-key
+docker compose -f docker-compose.prod.yml exec -T garage /garage bucket website --allow kfl-media
+docker compose -f docker-compose.prod.yml exec -T garage /garage key info kfl-app-key --show-secret > garage_key_info.txt
+echo "    -> Garage access key + secret written to $DEPLOY_PATH/garage_key_info.txt."
+echo "       Copy the 'Key ID' and 'Secret key' values into AWS_ACCESS_KEY_ID / AWS_SECRET_ACCESS_KEY"
+echo "       in .env, then: rm garage_key_info.txt && docker compose -f docker-compose.prod.yml up -d --no-deps api"
 
 echo "==> Running Prisma migrations against the fresh database"
 docker compose -f docker-compose.prod.yml exec -T api npx prisma migrate deploy

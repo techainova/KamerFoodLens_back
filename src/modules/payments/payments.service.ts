@@ -62,21 +62,61 @@ export class PaymentsService {
     return this.initiateCinetPay(payment.id, payment.amountXAF, order.ref);
   }
 
+  // CinetPay's IPN carries no signature — unlike Stripe, anyone who learns (or guesses) a
+  // transaction_id could POST a fake "success" here. So the body is only ever used to find
+  // WHICH payment to re-check, never to decide its outcome: the actual status always comes
+  // from CinetPay's own server-to-server "check payment" API, authenticated with our apikey.
   public async handleCinetPayWebhook(payload: Record<string, unknown>): Promise<{ received: boolean }> {
     const externalRef = String(payload.cpm_trans_id ?? payload.transaction_id ?? '');
-    const status =
-      String(payload.cpm_result ?? payload.status ?? '') === '00'
-        ? PaymentStatus.succeeded
-        : PaymentStatus.failed;
-
-    const payment = await this.prisma.payment.findFirst({ where: { externalRef } });
-    if (payment && payment.status === PaymentStatus.pending) {
-      const updated = await this.prisma.payment.update({ where: { id: payment.id }, data: { status } });
-      await this.creditWalletIfTopupSucceeded(updated);
-      await this.notifyPaymentStatus(updated);
+    if (!externalRef) {
+      return { received: true };
     }
 
+    const payment = await this.prisma.payment.findFirst({ where: { externalRef } });
+    if (!payment || payment.status !== PaymentStatus.pending) {
+      return { received: true };
+    }
+
+    const verifiedStatus = await this.verifyCinetPayTransaction(externalRef);
+    if (verifiedStatus === null) {
+      return { received: true };
+    }
+
+    const updated = await this.prisma.payment.update({
+      where: { id: payment.id },
+      data: { status: verifiedStatus },
+    });
+    await this.creditWalletIfTopupSucceeded(updated);
+    await this.notifyPaymentStatus(updated);
+
     return { received: true };
+  }
+
+  private async verifyCinetPayTransaction(transactionId: string): Promise<PaymentStatus | null> {
+    const apiKey = this.configService.get<string>('CINETPAY_API_KEY');
+    const siteId = this.configService.get<string>('CINETPAY_SITE_ID');
+    if (!apiKey || !siteId) {
+      return null;
+    }
+
+    try {
+      const response = await fetch('https://api-checkout.cinetpay.com/v2/payment/check', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ apikey: apiKey, site_id: siteId, transaction_id: transactionId }),
+      });
+      const result = (await response.json()) as { data?: { status?: string } };
+
+      if (result.data?.status === 'ACCEPTED') {
+        return PaymentStatus.succeeded;
+      }
+      if (result.data?.status === 'REFUSED') {
+        return PaymentStatus.failed;
+      }
+      return null;
+    } catch {
+      return null;
+    }
   }
 
   public async handleStripeWebhook(rawBody: string, signature: string): Promise<{ received: boolean }> {

@@ -11,7 +11,6 @@ import {
   SystemLog,
   SystemSetting,
   Tombola,
-  User,
   LogLevel,
 } from '@prisma/client';
 import { Roles } from '../../common/decorators/roles.decorator';
@@ -20,6 +19,7 @@ import { UpdateSettingsDto } from './dto/update-settings.dto';
 import { SuspendUserDto } from './dto/suspend-user.dto';
 import { RejectProRequestDto } from './dto/reject-pro-request.dto';
 import { AdminDashboardStats, AdminService } from './admin.service';
+import { SafeUser } from '../../common/utils/sanitize-user.util';
 
 interface PaginatedResult<T> {
   items: T[];
@@ -47,28 +47,28 @@ export class AdminController {
   public async getUsers(
     @Query('filter') filter?: string,
     @Query('page') page?: string,
-  ): Promise<PaginatedResult<User>> {
+  ): Promise<PaginatedResult<SafeUser>> {
     return this.adminService.getUsers(filter, page ? parseInt(page, 10) : 1);
   }
 
   @Get('users/:id')
   @ApiOperation({ summary: 'Get a user by id' })
   @ApiResponse({ status: 200, description: 'User details' })
-  public async getUserById(@Param('id') id: string): Promise<User> {
+  public async getUserById(@Param('id') id: string): Promise<SafeUser> {
     return this.adminService.getUserById(id);
   }
 
   @Patch('users/:id/suspend')
   @ApiOperation({ summary: 'Suspend a user for a number of days' })
   @ApiResponse({ status: 200, description: 'User suspended' })
-  public async suspendUser(@Param('id') id: string, @Body() dto: SuspendUserDto): Promise<User> {
+  public async suspendUser(@Param('id') id: string, @Body() dto: SuspendUserDto): Promise<SafeUser> {
     return this.adminService.suspendUser(id, dto.days);
   }
 
   @Patch('users/:id/ban')
   @ApiOperation({ summary: 'Permanently ban a user' })
   @ApiResponse({ status: 200, description: 'User banned' })
-  public async banUser(@Param('id') id: string): Promise<User> {
+  public async banUser(@Param('id') id: string): Promise<SafeUser> {
     return this.adminService.banUser(id);
   }
 

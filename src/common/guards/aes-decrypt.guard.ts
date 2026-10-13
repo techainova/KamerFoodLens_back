@@ -57,10 +57,13 @@ export class AesDecryptGuard implements CanActivate {
       const decrypted = Buffer.concat([decipher.update(encryptedBuffer), decipher.final()]);
       req.body = JSON.parse(decrypted.toString('utf8'));
       return true;
-    } catch (error) {
-      throw new BadRequestException(
-        `Failed to decrypt payload: ${error instanceof Error ? error.message : 'unknown error'}`,
-      );
+    } catch {
+      // Deliberately one generic message for every failure mode (bad tag, bad IV, truncated
+      // ciphertext, non-JSON plaintext, ...). Node's own crypto error text ("Unsupported state
+      // or unable to authenticate data" vs. a JSON.parse SyntaxError) would otherwise let an
+      // attacker distinguish "tag didn't verify" from "tag verified, plaintext was garbage" —
+      // a usable oracle against the encryption scheme.
+      throw new BadRequestException('Failed to decrypt payload');
     }
   }
 }

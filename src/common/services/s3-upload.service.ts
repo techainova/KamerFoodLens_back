@@ -1,4 +1,4 @@
-import { Injectable, Logger, OnModuleInit } from '@nestjs/common';
+import { BadRequestException, Injectable, Logger, OnModuleInit } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import {
   CreateBucketCommand,
@@ -8,6 +8,53 @@ import {
   S3Client,
 } from '@aws-sdk/client-s3';
 import { v4 as uuid } from 'uuid';
+
+// Every media type the app actually uploads (avatars, menu/event/post photos, scan
+// photos, videos, course media). Deliberately excludes anything a browser would ever
+// render/execute inline instead of treating as a download — notably image/svg+xml
+// (can carry a <script>) and any text/* or application/javascript — since this bucket
+// serves uploaded objects back with the caller-supplied Content-Type and, for local
+// Garage/MinIO setups, over plain unauthenticated HTTP: an attacker-chosen Content-Type
+// of text/html on their own "avatar" would otherwise be a stored-XSS primitive.
+const ALLOWED_MIME_TYPES = new Set<string>([
+  'image/jpeg',
+  'image/png',
+  'image/webp',
+  'image/gif',
+  'video/mp4',
+  'video/quicktime',
+  'video/webm',
+  'video/x-m4v',
+  'audio/wav',
+  'audio/x-wav',
+  'audio/mpeg',
+  'audio/mp4',
+  'audio/aac',
+  'audio/x-m4a',
+  'audio/webm',
+  'application/pdf',
+  'application/octet-stream',
+]);
+
+const EXTENSION_BY_MIME_TYPE: Record<string, string> = {
+  'image/jpeg': 'jpg',
+  'image/png': 'png',
+  'image/webp': 'webp',
+  'image/gif': 'gif',
+  'video/mp4': 'mp4',
+  'video/quicktime': 'mov',
+  'video/webm': 'webm',
+  'video/x-m4v': 'm4v',
+  'audio/wav': 'wav',
+  'audio/x-wav': 'wav',
+  'audio/mpeg': 'mp3',
+  'audio/mp4': 'm4a',
+  'audio/aac': 'aac',
+  'audio/x-m4a': 'm4a',
+  'audio/webm': 'weba',
+  'application/pdf': 'pdf',
+  'application/octet-stream': 'bin',
+};
 
 @Injectable()
 export class S3UploadService implements OnModuleInit {
@@ -80,10 +127,12 @@ export class S3UploadService implements OnModuleInit {
   }
 
   public async uploadBase64Image(base64Data: string, mimeType: string, folder: string): Promise<string> {
+    if (!ALLOWED_MIME_TYPES.has(mimeType)) {
+      throw new BadRequestException(`Unsupported file type: ${mimeType}`);
+    }
+
     const buffer = Buffer.from(base64Data.replace(/^data:.*;base64,/, ''), 'base64');
-    // "image/svg+xml" etc. carry a structured-syntax suffix after '+' that
-    // isn't part of the file extension — strip it so keys end in ".svg", not ".svg+xml".
-    const extension = (mimeType.split('/')[1] ?? 'jpg').split('+')[0];
+    const extension = EXTENSION_BY_MIME_TYPE[mimeType];
     const key = `${folder}/${uuid()}.${extension}`;
 
     await this.client.send(

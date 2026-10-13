@@ -14,12 +14,12 @@ import {
   SystemLog,
   SystemSetting,
   Tombola,
-  User,
 } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
 import { PayoutJobData } from '../../jobs/payout.processor';
 import { UpdateSettingsDto } from './dto/update-settings.dto';
 import { NotificationsService } from '../notifications/notifications.service';
+import { sanitizeUser, SafeUser } from '../../common/utils/sanitize-user.util';
 
 export interface AdminDashboardStats {
   totalUsers: number;
@@ -78,7 +78,7 @@ export class AdminService {
     };
   }
 
-  public async getUsers(filter: string | undefined, page: number): Promise<PaginatedResult<User>> {
+  public async getUsers(filter: string | undefined, page: number): Promise<PaginatedResult<SafeUser>> {
     const skip = (page - 1) * PAGE_SIZE;
     const where = filter
       ? {
@@ -95,18 +95,18 @@ export class AdminService {
       this.prisma.user.count({ where }),
     ]);
 
-    return { items, total, page };
+    return { items: items.map(sanitizeUser), total, page };
   }
 
-  public async getUserById(id: string): Promise<User> {
+  public async getUserById(id: string): Promise<SafeUser> {
     const user = await this.prisma.user.findUnique({ where: { id } });
     if (!user) {
       throw new NotFoundException('User not found');
     }
-    return user;
+    return sanitizeUser(user);
   }
 
-  public async suspendUser(id: string, days: number): Promise<User> {
+  public async suspendUser(id: string, days: number): Promise<SafeUser> {
     const suspendedUntil = new Date(Date.now() + days * 24 * 60 * 60 * 1000);
     const user = await this.prisma.user.update({ where: { id }, data: { suspendedUntil, isActive: false } });
     await this.notificationsService.create(
@@ -115,10 +115,10 @@ export class AdminService {
       'Compte suspendu',
       `Votre compte a été suspendu pour ${days} jour(s), jusqu'au ${suspendedUntil.toLocaleDateString('fr-FR')}.`,
     );
-    return user;
+    return sanitizeUser(user);
   }
 
-  public async banUser(id: string): Promise<User> {
+  public async banUser(id: string): Promise<SafeUser> {
     const user = await this.prisma.user.update({ where: { id }, data: { isBanned: true, isActive: false } });
     await this.notificationsService.create(
       id,
@@ -126,7 +126,7 @@ export class AdminService {
       'Compte banni',
       'Votre compte a été banni pour non-respect des conditions d\'utilisation.',
     );
-    return user;
+    return sanitizeUser(user);
   }
 
   public async getProRequests(status: ProRequestStatus | undefined): Promise<ProRequest[]> {

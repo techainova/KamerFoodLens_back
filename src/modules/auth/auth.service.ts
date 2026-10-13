@@ -144,7 +144,7 @@ export class AuthService {
 
   public async verifyOtp(dto: VerifyOtpDto): Promise<AuthResponse> {
     const storedOtp = await this.redis.get(this.otpKey(dto.email));
-    if (!storedOtp || storedOtp !== dto.otp) {
+    if (!storedOtp || !this.timingSafeStringEqual(storedOtp, dto.otp)) {
       throw new BadRequestException('Invalid or expired verification code');
     }
 
@@ -207,7 +207,7 @@ export class AuthService {
     }
 
     const storedToken = await this.redis.get(`${REFRESH_TOKEN_PREFIX}${payload.sub}`);
-    if (!storedToken || storedToken !== refreshToken) {
+    if (!storedToken || !this.timingSafeStringEqual(storedToken, refreshToken)) {
       throw new UnauthorizedException('Refresh token has been revoked');
     }
 
@@ -266,7 +266,7 @@ export class AuthService {
 
   public async resetPassword(email: string, otp: string, newPassword: string): Promise<{ message: string }> {
     const storedCode = await this.redis.get(`${RESET_CODE_PREFIX}${email}`);
-    if (!storedCode || storedCode !== otp) {
+    if (!storedCode || !this.timingSafeStringEqual(storedCode, otp)) {
       throw new BadRequestException('Invalid or expired reset code');
     }
 
@@ -449,6 +449,19 @@ export class AuthService {
       // eslint-disable-next-line no-console
       console.error(`Failed to send welcome email to ${email}:`, error instanceof Error ? error.message : error);
     }
+  }
+
+  // Plain !== leaks comparison time proportional to how many leading bytes match, letting
+  // an attacker narrow down a valid OTP/refresh token one byte at a time. Lengths here are
+  // fixed/public (6-digit OTP, JWT format) so an early-return on length mismatch reveals
+  // nothing a formatting rule didn't already.
+  private timingSafeStringEqual(a: string, b: string): boolean {
+    const bufA = Buffer.from(a);
+    const bufB = Buffer.from(b);
+    if (bufA.length !== bufB.length) {
+      return false;
+    }
+    return crypto.timingSafeEqual(bufA, bufB);
   }
 
   private otpKey(email: string): string {

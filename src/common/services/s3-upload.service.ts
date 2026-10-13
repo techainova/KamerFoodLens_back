@@ -16,11 +16,18 @@ export class S3UploadService implements OnModuleInit {
   private readonly bucket: string;
   private readonly region: string;
   private readonly endpoint: string | undefined;
+  private readonly publicUrl: string | undefined;
 
   public constructor(private readonly configService: ConfigService) {
     this.region = this.configService.get<string>('AWS_REGION') ?? 'eu-west-3';
     this.bucket = this.configService.get<string>('AWS_S3_BUCKET') ?? '';
     this.endpoint = this.configService.get<string>('AWS_ENDPOINT') || undefined;
+    // The SDK needs the internal/private endpoint (e.g. a Docker-network hostname) to
+    // talk to the store, but that address is often not reachable by the end client that
+    // later opens the returned URL. AWS_PUBLIC_URL lets ops point returned links at a
+    // reverse-proxied public address instead; it defaults to `endpoint` so existing local
+    // MinIO setups (where the endpoint already is the publicly reachable one) keep working.
+    this.publicUrl = this.configService.get<string>('AWS_PUBLIC_URL') || this.endpoint;
 
     this.client = new S3Client({
       region: this.region,
@@ -88,8 +95,8 @@ export class S3UploadService implements OnModuleInit {
       }),
     );
 
-    if (this.endpoint) {
-      return `${this.endpoint}/${this.bucket}/${key}`;
+    if (this.publicUrl) {
+      return `${this.publicUrl}/${this.bucket}/${key}`;
     }
     return `https://${this.bucket}.s3.${this.region}.amazonaws.com/${key}`;
   }
